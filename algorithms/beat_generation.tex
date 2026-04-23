@@ -1,0 +1,56 @@
+
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\geometry{a4paper, margin=1in}
+
+\title{Algorithm for Optimized Police Patrol Beat Generation}
+\author{Graduation Project: Determining Police Patrol Areas}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+
+\section{Introduction}
+This document outlines the algorithm applied for the generation of police patrol beats based on the Police Patrol Area Covering (PPAC) model. The objective is to efficiently distribute patrol resources by clustering crime incidents into small-scale units (Beats) that prioritize areas with higher crime gravity.
+
+\section{Methodology: Weighted K-Means Clustering}
+The beat generation process utilizes a Weighted K-Means clustering approach. Unlike standard clustering, this method incorporates the \textit{crime\_weight} ($a_i$) for each incident, ensuring that the resulting beat centroids are spatially biased toward high-priority calls.
+
+\subsection{Mathematical Objective}
+The algorithm seeks to minimize the weighted within-cluster sum of squares (WCSS). For a set of $n$ incidents $(x_1, x_2, \dots, x_n)$ with weights $(a_1, a_2, \dots, a_n)$, the objective is to partition them into $k$ beats $S = \{S_1, S_2, \dots, S_k\}$ to minimize:
+\begin{equation}
+    \arg \min_{S} \sum_{j=1}^{k} \sum_{x_i \in S_j} a_i \| x_i - \mu_j \|^2
+\end{equation}
+where $\mu_j$ is the weighted centroid of beat $S_j$. This approach aligns with the PPAC objective of maximizing the number of weighted incidents covered within a specific service distance.
+
+\section{The Algorithm}
+
+\begin{algorithm}
+\caption{Weighted Beat Generation Algorithm}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Set of incidents $I$ with coordinates $(LAT, LON)$, crime weights $A = \{a_1, \dots, a_n\}$, and target number of beats $k$.
+\State \textbf{Pre-processing:} Filter incidents within defined city boundaries (e.g., Los Angeles) and project coordinates to a local Cartesian system (e.g., EPSG:3857).
+\State \textbf{Initialization:} Select $k$ initial centroids $\mu_1, \dots, \mu_k$ randomly or using K-Means++ logic.
+\State \textbf{Assignment Step:}
+    \For{each incident $i \in I$}
+        \State Assign $i$ to the nearest beat $S_j$ such that $\| x_i - \mu_j \|$ is minimized.
+    \EndFor
+\State \textbf{Update Step:}
+    \For{each beat $S_j$}
+        \State Update the centroid $\mu_j$ as the weighted average of all points in $S_j$:
+        \State $\mu_j = \frac{\sum_{x_i \in S_j} a_i x_i}{\sum_{x_i \in S_j} a_i}$
+    \EndFor
+\State \textbf{Repeat:} Steps 4 and 5 until convergence (centroids no longer change significantly).
+\State \textbf{Output:} Optimized beat centroids and assignments.
+\end{algorithmic}
+\end{algorithm}
+
+\section{Hierarchical Implementation}
+The generated beats represent the "Potential Facility Sites" used in Stage 2 of the model. By clustering these beat centers again into Sectors, we ensure a fair and realistic administrative hierarchy that respects the geographic density of crime.
+
+\end{document}

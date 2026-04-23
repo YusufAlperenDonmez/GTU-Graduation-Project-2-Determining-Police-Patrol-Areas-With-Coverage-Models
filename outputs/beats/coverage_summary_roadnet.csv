@@ -1,0 +1,9 @@
+metric,value
+Total incidents,997488.0
+Service distance (mi),2.0
+Service distance (m),3218.68
+Incidents covered (count),649759.0
+Coverage pct (count),65.14
+Incidents covered (weighted),2057546.0
+Coverage pct (weighted),65.37
+Total runtime (s),55.8
