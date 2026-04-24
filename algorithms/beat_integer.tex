@@ -1,0 +1,626 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath}
+\usepackage{amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{hyperref}
+\usepackage{xcolor}
+\usepackage{titlesec}
+\geometry{a4paper, margin=1in}
+
+\definecolor{ppacblue}{RGB}{30, 80, 160}
+\definecolor{roadgreen}{RGB}{20, 130, 60}
+
+\hypersetup{colorlinks=true, linkcolor=ppacblue, urlcolor=ppacblue}
+
+\title{\textbf{Police Patrol Area Covering Models}\\[0.4em]
+       \large A Comparative Study: The Classical PPAC Model\\
+       vs.\ a Road-Network Distance Extension with Integer Programming}
+\author{Graduation Project --- Determining Police Patrol Areas\\
+        Based on Curtin, Hayslett-McCall \& Qiu (2010)}
+\date{\today}
+
+\begin{document}
+
+\maketitle
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Introduction}
+% =============================================================================
+
+Virtually every police department divides its jurisdiction into hierarchical
+patrol geographies --- precincts, sectors, and beats.  Despite their operational
+importance, these boundaries have historically been drawn by hand, with no
+formal quantitative method for evaluating whether the resulting arrangement
+is efficient \cite{curtin2010}.
+
+Curtin, Hayslett-McCall, and Qiu (2010) introduced the \textbf{Police Patrol
+Area Covering (PPAC) model}, which applies the Maximal Covering Location
+Problem (MCLP) \cite{church1974} to optimally position patrol command centres
+so as to maximise the number of weighted crime incidents reachable within an
+acceptable service distance~$S$.  Applied to Dallas, TX, PPAC achieved an
+18.9\,\% reduction in total response distance and an 18-percentage-point
+improvement in incident coverage compared with the hand-drawn geography.
+
+This document describes the PPAC model as formulated in the paper and then
+presents an \textbf{extended, road-network-aware} version that replaces the
+straight-line distance assumption of the original with shortest-path distances
+computed over the OpenStreetMap (OSM) drivable road network.  Crucially, this
+extension retains the \textbf{integer programming} solution approach of the
+original paper --- using PuLP with the CBC branch-and-bound solver --- thereby
+preserving the optimality guarantees that distinguish PPAC from heuristic
+methods.  A structured side-by-side comparison of assumptions, formulations,
+and solution procedures is given throughout.
+
+% =============================================================================
+\section{Shared Notation}
+% =============================================================================
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.25}
+\begin{tabularx}{\textwidth}{@{} l X @{}}
+\toprule
+Symbol & Meaning \\ \midrule
+$I,\,i$          & Set and index of known incident locations (calls for service) \\
+$J,\,j$          & Set and index of candidate patrol command-centre locations \\
+$a_i$            & Weight / priority of incident $i$ (e.g.\ Signal Code value) \\
+$P$              & Number of patrol areas (command centres) to be located \\
+$S$              & Acceptable service distance (threshold) \\
+$d_{ij}$         & Distance from incident $i$ to command centre $j$ \\
+$N_i$            & $\{j \in J \mid d_{ij} \le S\}$ --- set of centres that can cover $i$ \\
+$x_j$            & 1 if a patrol is located at $j$; 0 otherwise \\
+$y_i$            & 1 if incident $i$ is covered by at least one patrol; 0 otherwise \\
+$G=(V,E,\ell)$   & OSM directed road graph with edge lengths $\ell(e)$ in metres \\
+$v^*_p$          & Nearest OSM node to geographic point $p$ \\
+\bottomrule
+\end{tabularx}
+\caption{Notation common to both approaches.}
+\end{table}
+
+% =============================================================================
+\section{The Classical PPAC Model (Curtin et al., 2010)}
+% =============================================================================
+
+\subsection{Core Objective}
+
+The PPAC model is a direct application of the MCLP.  Its objective is to
+select $P$ command-centre locations from the candidate set $J$ so as to
+\emph{maximise the total weight of incidents covered} within service
+distance~$S$:
+
+\begin{equation}
+    \text{Maximise} \quad Z = \sum_{i \in I} a_i \, y_i
+    \label{eq:ppac_obj}
+\end{equation}
+
+\noindent subject to:
+\begin{align}
+    \sum_{j \in N_i} x_j &\ge y_i  && \forall\, i \in I
+        \label{eq:coverage_constraint}\\
+    \sum_{j \in J} x_j   &= P
+        \label{eq:cardinality_constraint}\\
+    x_j &\in \{0,1\}               && \forall\, j \in J
+        \label{eq:binary_x}\\
+    y_i &\in \{0,1\}               && \forall\, i \in I
+        \label{eq:binary_y}
+\end{align}
+
+Constraint~\eqref{eq:coverage_constraint} ensures $y_i=1$ only when at least
+one patrol in $N_i$ is selected.  Constraint~\eqref{eq:cardinality_constraint}
+fixes the total number of patrols to $P$.
+
+\subsection{Distance Metric}
+
+The paper constructs $N_i$ via an \textbf{all-to-all shortest-path algorithm
+on the road network} --- using the North Central Texas Council of Governments
+(NCTCOG) street network inside a GIS.  However, the sets $N_i$ are computed
+\emph{once and externally}, and the integer programme itself operates on the
+binary coverage indicators only.  The optimisation software (CPLEX\,8.1 with
+OPL) never sees individual road-link data; it sees only which
+$(i,j)$ pairs satisfy $d_{ij} \le S$.
+
+The service distance for Dallas was set to $S = 2$ miles for five of the six
+divisions and $S = 1$ mile for the markedly smaller Central Division, chosen
+empirically to match typical cross-beat distances.
+
+\subsection{Candidate Facility Locations}
+
+Because no predefined list of admissible command-centre sites existed, the
+authors used the \textbf{centroids of the next lower level of the police
+hierarchy} (beat centroids within a division) as the candidate set $J$.  This
+is acknowledged as a proxy; cadastral data on vacant sites would be preferable.
+
+\subsection{Incident Weights}
+
+Incident weights $a_i$ correspond to the Dallas Police Department's
+\emph{Signal Code} priority variable (1--5).  The paper notes that the
+relationship between Signal Code and true severity is non-linear, and that
+expert input is required to calibrate the weight function properly.
+
+\subsection{Backup Coverage Variant}
+
+The paper introduces a backup (multiple) coverage extension by relaxing
+constraint~\eqref{eq:binary_y}:
+
+\begin{equation}
+    y_i \in \{0,1,\ldots,P\} \quad \forall\, i \in I
+    \label{eq:backup}
+\end{equation}
+
+This allows $y_i$ to accumulate each time an additional command centre covers
+incident~$i$, rewarding geographic overlap.  A multiobjective formulation is
+then solved for a range of values of a coverage lower bound $O$:
+
+\begin{equation}
+    \sum_{i=1}^{n} a_i w_i \ge O
+    \label{eq:backup_constraint}
+\end{equation}
+
+where $w_i$ mirrors the original binary $y_i$, generating a Pareto frontier
+between maximal coverage and maximal backup coverage (Fig.\,6 in the paper).
+
+\subsection{Solution Procedure}
+
+The PPAC instances are solved to \textbf{proven optimality} using CPLEX\,8.1
+integer programming with branch-and-bound over LP relaxations.  The largest
+instance tested involved 87,603 calls for service and was solved in under one
+hour on a 2.13\,GHz workstation.
+
+% =============================================================================
+\section{Road-Network Distance Extension}
+% =============================================================================
+
+\subsection{Motivation}
+
+The PPAC model is explicit that ``any appropriate impedance value (or values)
+[can] be used in the computation of the `distances' between incidents and
+facilities'' \cite{curtin2010}.  In practice, straight-line distance
+systematically \emph{underestimates} actual travel distance in cities with
+irregular grids, freeways, water barriers, or hillside terrain --- all of
+which are characteristic of Los Angeles.  The road-network extension replaces
+the GIS-computed OD matrix with one derived directly from the OSM drivable
+graph, making the method fully open-source and reproducible without proprietary
+street data.
+
+Importantly, the extension \textbf{retains the integer programming solution
+approach} of Curtin et al.\ (2010).  The only substantive methodological
+change relative to the classical PPAC is the data source for the OD matrix
+($d_{ij}$ values): road-network Dijkstra distances replace the NCTCOG
+shortest-path distances.  The optimisation model, constraints, and
+solution procedure are otherwise identical in form.
+
+\subsection{Two-Level Procedure for Candidate Sites}
+
+Rather than using pre-existing police beat centroids as the candidate set $J$,
+the extended approach derives candidate locations \emph{from the crime data
+itself} using a weighted K-Means procedure in Stage~1 only, which produces
+a data-driven set of beat centroids.  Stage~2 is then the PPAC integer
+programme operating on these data-derived candidates.
+
+\paragraph{Stage 1 --- Beat generation (K-Means).}
+Minimise the weighted within-cluster sum of squares (WCSS) over $k_1$ clusters:
+
+\begin{equation}
+    \underset{\mathcal{S}}{\arg\min}
+    \sum_{j=1}^{k_1} \sum_{x_i \in \mathcal{S}_j}
+    a_i \,\| x_i - \mu_j \|^2
+    \label{eq:wcss}
+\end{equation}
+
+where $\mu_j$ is the weighted centroid of beat cluster $\mathcal{S}_j$:
+
+\begin{equation}
+    \mu_j = \frac{\displaystyle\sum_{x_i \in \mathcal{S}_j} a_i\, x_i}
+                 {\displaystyle\sum_{x_i \in \mathcal{S}_j} a_i}
+\end{equation}
+
+The $k_1 = |J|$ resulting beat centroids form the candidate set $J$ for the
+integer programme.  This mirrors the classical PPAC approach of using the
+next lower hierarchical level (beat centroids) as candidate HQ sites.
+
+\paragraph{Stage 2 --- Sector headquarters via PPAC IP.}
+The integer programme defined in Section~3 is solved with $J$ set to the
+$k_1$ beat centroids, road-network $N_i$ sets, and beat-level aggregated
+weights $a_j = \sum_{i \in \mathcal{S}_j} a_i$.  The solver returns $P$
+optimal HQ locations $H = \{h_1,\dots,h_P\} \subseteq J$.
+
+\subsection{Road-Network Graph Construction}
+
+The drivable road network for the study area is obtained from OSM via the
+\textit{OSMnx} library \cite{boeing2017}:
+
+\begin{equation}
+    G = (V, E, \ell), \quad \ell(e) \in \mathbb{R}_{>0} \text{ (metres)}
+\end{equation}
+
+The graph covers the convex hull of the city boundary polygon and is persisted
+as GraphML for reproducibility.
+
+\subsection{Node Snapping}
+
+Command-centre candidates $j \in J$ and crime incidents $i \in I$ are
+geographic points that may not coincide with an OSM intersection.  Each is
+snapped to its nearest graph node:
+
+\begin{equation}
+    v^*_p = \underset{v \in V}{\arg\min}\; d_{\mathrm{Euclidean}}(p,\, v)
+\end{equation}
+
+This ensures that every distance query is computed between valid road-graph
+nodes, avoiding the ``floating point in space'' problem inherent in
+straight-line calculations.
+
+\subsection{Road-Network OD Matrix and $N_i$ Construction}
+
+Shortest-path lengths are computed via Dijkstra's algorithm from each
+candidate HQ node with a cutoff at $S$:
+
+\begin{equation}
+    d^{\mathrm{road}}_{ij} =
+    \text{Dijkstra}\!\left(G,\; v^*_i,\; v^*_j,\; \text{cutoff}=S\right)
+    \label{eq:dijkstra}
+\end{equation}
+
+The coverage sets are then:
+
+\begin{equation}
+    N_i = \bigl\{\, j \in J \;\big|\; d^{\mathrm{road}}_{ij} \le S \,\bigr\}
+    \label{eq:Ni_road}
+\end{equation}
+
+These sets $N_i$ are passed to the integer programme exactly as in the
+classical formulation; the objective function and
+constraints~\eqref{eq:ppac_obj}--\eqref{eq:binary_y} are evaluated unchanged.
+
+\subsection{Integer Programming Solution}
+
+The PPAC integer programme is solved using \textbf{PuLP} with the open-source
+\textbf{CBC} branch-and-bound solver, which provides the same optimality
+guarantees as CPLEX:
+
+\begin{enumerate}
+    \item PuLP translates the PPAC formulation into a binary integer programme.
+    \item CBC solves the LP relaxation at each node of the branch-and-bound tree.
+    \item The solver terminates with a \textbf{proven optimal} solution or,
+          if a time limit is reached, with the best integer feasible solution
+          found and a bound on the optimality gap.
+\end{enumerate}
+
+The solver returns binary vectors $\mathbf{x}^* \in \{0,1\}^{|J|}$ and
+$\mathbf{y}^* \in \{0,1\}^{|I|}$ and the optimal objective value $Z^*$.
+
+% =============================================================================
+\section{Side-by-Side Comparison}
+% =============================================================================
+
+\begin{table}[h]
+\centering
+\renewcommand{\arraystretch}{1.4}
+\begin{tabularx}{\textwidth}{@{} l X X @{}}
+\toprule
+\textbf{Aspect}
+    & \textbf{\color{ppacblue}Classical PPAC}
+      \textcolor{ppacblue}{(Curtin et al., 2010)}
+    & \textbf{\color{roadgreen}Road-Network Extension}
+      \textcolor{roadgreen}{(This Work)} \\
+\midrule
+
+Study area
+    & Dallas, TX (6 police divisions)
+    & Los Angeles, CA \\
+
+\addlinespace
+Incident data
+    & Dallas PD calls for service, 2000
+      (1 day to 1 year, up to 87,603 incidents)
+    & LAPD crime incident CSV with \texttt{crime\_weight} field \\
+
+\addlinespace
+Candidate locations $J$
+    & Centroids of existing beat polygons within each division
+    & Derived from data: weighted Mini-Batch K-Means beat centroids
+      ($|J| = k_1 = 300$) \\
+
+\addlinespace
+Incident weights $a_i$
+    & Dallas Signal Code (1--5); non-linear scale acknowledged
+    & \texttt{crime\_weight} column from pre-processed dataset;
+      aggregated to beat level for the IP \\
+
+\addlinespace
+Distance metric $d_{ij}$
+    & Shortest path on proprietary NCTCOG road network (GIS);
+      result exported as OD matrix for the solver
+    & Dijkstra shortest path on open OSM drive graph via OSMnx;
+      nodes snapped before querying; cutoff at $S$ \\
+
+\addlinespace
+How $N_i$ is built
+    & GIS all-to-all shortest-path query; custom selection interface
+    & \texttt{nx.single\_source\_dijkstra\_path\_length} with
+      \texttt{weight=`length'} and \texttt{cutoff}=$S$;
+      one Dijkstra call per candidate site \\
+
+\addlinespace
+\textbf{Optimisation engine}
+    & \textbf{CPLEX 8.1} integer programming
+      (branch-and-bound + simplex LP relaxation);
+      \textbf{proven optimal}
+    & \textbf{PuLP + CBC} integer programming
+      (branch-and-bound + LP relaxation);
+      \textbf{proven optimal} \\
+
+\addlinespace
+Solution quality
+    & \textbf{Globally optimal} for each division instance
+    & \textbf{Globally optimal} for candidate set $J$
+      (same guarantee class as classical PPAC) \\
+
+\addlinespace
+Service distance $S$
+    & 2 mi (five divisions); 1 mi (Central Division); empirically chosen
+    & 2 mi = 3,218.7 m; configurable parameter \\
+
+\addlinespace
+Backup coverage
+    & Formally modelled: relaxed $y_i \in \{0,\dots,P\}$;
+      Pareto frontier generated via constraint method
+    & Not yet implemented; planned as future extension \\
+
+\addlinespace
+Geography level solved
+    & Sector arrangement \emph{within} each division independently
+    & City-wide simultaneously (single IP pass) \\
+
+\addlinespace
+Geometry output
+    & Optimal sector boundaries derived from beat assignments
+    & Voronoi beat polygons clipped to city boundary; sectors by dissolve \\
+
+\addlinespace
+Street data source
+    & Proprietary NCTCOG GIS network (Dallas)
+    & OpenStreetMap via OSMnx (open, globally available) \\
+
+\addlinespace
+Computational cost
+    & CPLEX solves 87,603-incident instance in $<$ 1 hour
+    & K-Means Stage 1: fast;
+      OD matrix: $O(|J| \cdot \text{Dijkstra})$;
+      CBC IP: $O(|J| \cdot |I|)$ LP at each B\&B node \\
+
+\bottomrule
+\end{tabularx}
+\caption{Detailed comparison of the classical PPAC model and the road-network extension.}
+\label{tab:comparison}
+\end{table}
+
+% =============================================================================
+\section{Algorithmic Pseudocode}
+% =============================================================================
+
+\subsection{Classical PPAC (Curtin et al., 2010)}
+
+\begin{algorithm}[H]
+\caption{Classical PPAC --- Maximal Covering for Police Patrol Areas}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Incidents $I$ (geocoded, weighted $a_i$); candidate sites $J$
+       (beat centroids); service distance $S$; patrol count $P$.
+\State \textbf{GIS pre-processing:}
+    \Statex \quad Compute all-to-all shortest-path OD matrix on the road network.
+    \Statex \quad For each $i \in I$: $N_i \leftarrow \{j \in J \mid d_{ij} \le S\}$.
+\State \textbf{Export} to integer programming solver:
+       $\{|I|,\, |J|,\, a_i,\, N_i\}$.
+\State \textbf{Solve PPAC} (CPLEX branch-and-bound):
+    \begin{align*}
+        &\text{Maximise}\;\; \textstyle\sum_{i \in I} a_i y_i\\
+        &\text{s.t.}\;\;
+            \textstyle\sum_{j \in N_i} x_j \ge y_i \;\; \forall i;\quad
+            \textstyle\sum_j x_j = P;\quad
+            x_j, y_i \in \{0,1\}
+    \end{align*}
+\State \textbf{Assign} beats to sectors based on which optimal facility serves them.
+\State \textbf{Evaluate} efficiency: total distance, \% calls covered within $S$.
+\State \textbf{Optional --- Backup coverage:}
+    \Statex \quad Relax $y_i \in \{0,\dots,P\}$; add constraint $\sum a_i w_i \ge O$.
+    \Statex \quad Solve repeatedly over a range of $O$ to trace the Pareto frontier.
+\end{algorithmic}
+\end{algorithm}
+
+\subsection{Road-Network Extension with Integer Programming (This Work)}
+
+\begin{algorithm}[H]
+\caption{Road-Network PPAC Extension --- Integer Programming Pipeline}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Crime CSV (LAT, LON, \texttt{crime\_weight}); city boundary
+       GeoJSON; $k_1$ (beats = $|J|$); $P$ (sectors); $S$ (miles).
+
+\State \textbf{Pre-processing:}
+    \Statex \quad Load and project data to EPSG:3857 (metric Cartesian).
+    \Statex \quad Spatial join: retain only incidents inside the city boundary.
+
+\State \textbf{Stage 1 --- Beat generation (Mini-Batch K-Means), candidate set $J$:}
+    \Repeat
+        \State Assign each incident $i$ to nearest centroid $\mu_j$.
+        \State Update $\mu_j \leftarrow \frac{\sum_{x_i \in \mathcal{S}_j} a_i x_i}
+                                              {\sum_{x_i \in \mathcal{S}_j} a_i}$.
+    \Until{convergence}
+    \State $J \leftarrow \{\mu_1, \dots, \mu_{k_1}\}$  \hfill
+           $\triangleright$ Beat centroids form candidate set
+    \State $a_j \leftarrow \sum_{i \in \mathcal{S}_j} a_i$ for each $j \in J$
+           \hfill $\triangleright$ Aggregate weights to beat level
+
+\State \textbf{Stage 2a --- OSM road graph:}
+    \Statex \quad Download (or load cached) OSM drive graph $G$ for study area polygon.
+    \Statex \quad Project to EPSG:4326 for OSMnx node queries.
+
+\State \textbf{Stage 2b --- Vectorized node snapping:}
+    \Statex \quad $v^*_j \leftarrow \arg\min_{v \in V} d_{\mathrm{Eucl}}(\mu_j, v)$
+               for all $j \in J$ \hfill $\triangleright$ One bulk KD-tree call
+    \Statex \quad $v^*_i \leftarrow \arg\min_{v \in V} d_{\mathrm{Eucl}}(i, v)$
+               for all $i \in I$ \hfill $\triangleright$ One bulk KD-tree call
+
+\State \textbf{Stage 2c --- Road-network OD matrix and $N_j$ construction:}
+    \For{each candidate $j \in J$}
+        \State $\ell_j \leftarrow \text{Dijkstra}(G,\; v^*_j,\; \text{cutoff}=S \cdot 1609.34)$
+               \hfill $\triangleright$ $\{$node $\to$ dist$\}$ within $S$
+        \State $N_j^{\text{beat}} \leftarrow \{j' \in J \mid v^*_{j'} \in \ell_j\}$
+               \hfill $\triangleright$ Beats coverable from candidate $j$
+    \EndFor
+
+\State \textbf{Stage 2d --- Solve PPAC via integer programming (PuLP + CBC):}
+    \State Declare binary variables: $x_j \in \{0,1\}$ for all $j \in J$
+    \State Declare binary variables: $y_j \in \{0,1\}$ for all $j \in J$ (beat demands)
+    \State Set objective: $\text{Maximise}\;\; Z = \sum_{j \in J} a_j \, y_j$
+    \For{each beat $j \in J$}
+        \State Add coverage constraint: $\sum_{j' \in N_j^{\text{beat}}} x_{j'} \ge y_j$
+    \EndFor
+    \State Add cardinality constraint: $\sum_{j \in J} x_j = P$
+    \State \textbf{Solve} with CBC branch-and-bound; obtain $\mathbf{x}^*,\, \mathbf{y}^*,\, Z^*$
+    \State $H \leftarrow \{\mu_j \mid x^*_j = 1\}$
+           \hfill $\triangleright$ $P$ optimal HQ locations
+
+\State \textbf{Stage 3 --- Full incident-level coverage evaluation:}
+    \For{each incident $i \in I$}
+        \State Assign $i$ to its nearest optimal HQ $h \in H$ (Euclidean KD-tree)
+        \State $d^{\mathrm{road}}_i \leftarrow
+               \text{Dijkstra}(G,\; v^*_i,\; v^*_h,\; \text{cutoff}=S \cdot 1609.34)$
+        \State $y_i \leftarrow \mathbf{1}[d^{\mathrm{road}}_i \le S \cdot 1609.34]$
+    \EndFor
+    \State $Z_{\text{eval}} \leftarrow \sum_{i \in I} a_i y_i$
+           \hfill $\triangleright$ Full PPAC objective on incident set
+
+\State \textbf{Stage 4 --- Visualisation:}
+    \Statex \quad Assign each beat $j$ to its nearest optimal HQ $\to$ sector labels.
+    \Statex \quad Voronoi tessellation of beat centroids $\to$ clip to city boundary.
+    \Statex \quad Dissolve by sector assignment $\to$ sector polygons.
+    \Statex \quad Render: sector colours, beat outlines, optimal HQ markers, coverage stats.
+
+\State \textbf{Output:} PNG patrol map; CSV summary ($Z^*$, $Z_{\text{eval}}$, \% covered).
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================================
+\section{Critical Differences and Limitations}
+% =============================================================================
+
+\subsection{Optimality: Shared Guarantee, Different Solver}
+
+The most important design decision in the extended pipeline is the retention of
+integer programming for Stage~2.  Both the classical PPAC and the road-network
+extension now produce \textbf{proven optimal} solutions for the MCLP objective:
+no other placement of $P$ command centres within the candidate set $J$ can
+yield a higher value of $Z$.  The open-source CBC solver (accessed via PuLP)
+implements the same branch-and-bound with LP relaxation paradigm as CPLEX, and
+its optimality certificates are mathematically equivalent.
+
+The candidate set $J$ differs between the two approaches: Curtin et al.\ use
+pre-existing beat centroids, while the extension derives $J$ from the crime
+data via K-Means.  Optimality is therefore relative to the respective candidate
+sets.  If the data-derived beat centroids do not include the globally best
+command-centre sites, the IP solution will be optimal for the given $J$ but not
+globally optimal.  This is identical in character to the limitation acknowledged
+by Curtin et al., who note that ``cadastral data showing vacant parcels would
+be preferable'' to beat centroids as candidate sites.
+
+\subsection{Scope of the Distance Computation}
+
+In both models, road-network distances are used \emph{only} to pre-compute the
+$N_i$ coverage sets; the integer programme itself is a combinatorial model
+operating on binary variables.  The key difference is data provenance: the
+classical PPAC uses a proprietary NCTCOG network, while the extension uses the
+open OSM graph via OSMnx, making it directly reproducible for any city with
+OSM coverage.
+
+\subsection{Geographic Scale}
+
+Curtin et al.\ solve each of Dallas's six divisions \emph{independently},
+respecting the administrative hierarchy.  The extension solves the entire LA
+city area in a single IP pass, which is computationally simpler but may produce
+sector boundaries that cut across natural administrative divisions.
+
+\subsection{Computational Considerations}
+
+The OD matrix construction step (one Dijkstra per candidate site) scales as
+$O(|J| \cdot (|V|\log|V| + |E|))$ and dominates total runtime for large
+networks.  The IP itself is NP-hard in the worst case, but empirical experience
+with MCLP instances --- including the 87,603-incident instance in the original
+paper --- shows that branch-and-bound with LP relaxation solves police-scale
+problems in practical time.  A time limit (default 600 s) is passed to CBC
+to bound worst-case runtime; the solver reports the optimality gap if the limit
+is reached.
+
+\subsection{Data Openness}
+
+The classical PPAC relies on proprietary NCTCOG street data and commercial
+CPLEX software.  The extension uses exclusively open data (OSM via OSMnx) and
+open-source solvers (PuLP + CBC), making it directly reproducible and adaptable
+to any city worldwide with OSM coverage.
+
+% =============================================================================
+\section{Conclusion}
+% =============================================================================
+
+The classical PPAC model of Curtin et al.\ (2010) established that operations
+research methods can substantially improve police patrol geography.  The
+road-network extension presented here preserves the core PPAC objective
+\emph{and} its integer programming solution approach, adapting the method for
+an open, reproducible workflow.  It replaces proprietary street data with OSM,
+derives candidate sites algorithmically from crime data rather than from a
+pre-existing police hierarchy, and both constructs coverage sets and evaluates
+final coverage using true drivable distances via Dijkstra shortest paths.
+
+The principal limitation --- that optimality is relative to the data-derived
+candidate set $J$ rather than to all possible geographic locations --- is shared
+with the original paper and remains an acknowledged constraint of the MCLP
+framework.  Future work could extend the approach with backup coverage
+(relaxing $y_i \in \{0,\dots,P\}$), capacity constraints on patrol workload
+(Equation~8 in Curtin et al.), or a bicriterion formulation that simultaneously
+minimises total weighted distance to uncovered incidents.
+
+% =============================================================================
+\begin{thebibliography}{9}
+
+\bibitem{curtin2010}
+Curtin, K.M., Hayslett-McCall, K., \& Qiu, F. (2010).
+\textit{Determining Optimal Police Patrol Areas with Maximal Covering and
+Backup Covering Location Models.}
+Networks and Spatial Economics, 10, 125--145.
+
+\bibitem{church1974}
+Church, R.L., \& ReVelle, C.S. (1974).
+\textit{The Maximal Covering Location Problem.}
+Papers of the Regional Science Association, 32, 101--118.
+
+\bibitem{hogan1986}
+Hogan, K., \& ReVelle, C. (1986).
+\textit{Concepts and Applications of Backup Coverage.}
+Management Science, 32, 1434--1444.
+
+\bibitem{daskin1981}
+Daskin, M.S., \& Stern, E.H. (1981).
+\textit{A Hierarchical Objective Set Covering Model for Emergency Medical
+Service Vehicle Deployment.}
+Transportation Science, 15, 137--152.
+
+\bibitem{boeing2017}
+Boeing, G. (2017).
+\textit{OSMnx: New Methods for Acquiring, Constructing, Analyzing, and
+Visualizing Complex Street Networks.}
+Computers, Environment and Urban Systems, 65, 126--139.
+
+\bibitem{pulp}
+Mitchell, S., O'Sullivan, M., \& Dunning, I. (2011).
+\textit{PuLP: A Linear Programming Toolkit for Python.}
+The University of Auckland, Auckland, New Zealand.
+
+\end{thebibliography}
+
+\end{document}
