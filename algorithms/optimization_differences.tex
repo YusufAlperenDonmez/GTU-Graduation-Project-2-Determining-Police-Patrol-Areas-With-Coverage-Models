@@ -1,0 +1,171 @@
+\documentclass[11pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\geometry{a4paper, margin=1in}
+
+\definecolor{common}{RGB}{20,100,40}
+\definecolor{diff}{RGB}{160,30,30}
+\definecolor{gray}{RGB}{90,90,90}
+
+\title{\textbf{PPAC Algorithm Comparison}\\[0.3em]
+\large Curtin et al.\ (2010) · Existing Evaluator · Fixed Optimizer}
+\date{}
+\begin{document}
+\maketitle
+
+% ─────────────────────────────────────────────────────────────
+\section*{Shared Notation}
+% ─────────────────────────────────────────────────────────────
+
+\begin{tabular}{@{}ll@{}}
+$I,\,i$   & incident locations with weights $a_i$ \\
+$J,\,j$   & candidate command-centre locations \\
+$P$       & number of patrol areas to locate \\
+$S$       & service distance threshold \\
+$d_{ij}$  & road-network distance from incident $i$ to facility $j$ \\
+$N_i$     & $\{j \in J \mid d_{ij} \le S\}$ — facilities that cover incident $i$ \\
+$x_j$     & 1 if facility placed at $j$, else 0 \\
+$y_i$     & 1 if incident $i$ is covered by $\ge 1$ facility \\
+$O$       & maximal covering objective $= \sum_i a_i y_i$ \\
+$B$       & backup objective $= \sum_i a_i \cdot (\text{count of facilities covering } i)$ \\
+\end{tabular}
+
+% ─────────────────────────────────────────────────────────────
+\section*{Common PPAC Objective (all three)}
+% ─────────────────────────────────────────────────────────────
+
+{\color{common}
+All three share the identical PPAC formulation from Church \& ReVelle (1974):
+\[
+  \text{Maximise}\;\; O = \sum_{i \in I} a_i\, y_i
+\]
+\[
+  \text{s.t.}\quad \sum_{j \in N_i} x_j \ge y_i\;\;\forall i;\quad
+  \sum_j x_j = P;\quad x_j,y_i \in \{0,1\}
+\]
+All three also compute the backup objective $B = \sum_i a_i \cdot y_i^{\text{count}}$,
+use road-network shortest-path distances for $d_{ij}$,
+and evaluate coverage via single-source Dijkstra with cutoff $S$.
+}
+
+% ─────────────────────────────────────────────────────────────
+\section*{Algorithm 1 — Curtin et al.\ (2010) [PDF Paper]}
+% ─────────────────────────────────────────────────────────────
+
+\begin{algorithm}[H]
+\caption{Classical PPAC (Curtin et al., 2010)}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Geocoded incidents $I$ with Signal Code weights $a_i$;
+       {\color{diff}existing beat-centroid polygons} as candidate set $J$;
+       $P$ (sectors per division); $S$ (2 mi, or 1 mi for Central Division)
+\State \textbf{Distance:} {\color{diff}Proprietary NCTCOG GIS network};
+       all-to-all OD matrix computed externally
+\State \textbf{Build} $N_i \leftarrow \{j \in J \mid d_{ij} \le S\}$ for all $i$
+\State \textbf{Solve} via {\color{diff}CPLEX 8.1 branch-and-bound} (proven optimal):
+\Statex \quad $\max \sum_i a_i y_i$ \; s.t.\ coverage + cardinality constraints
+\State \textbf{Assign} beats to sectors from optimal $x_j^*$
+\State \textbf{Evaluate} $O$, total distance; compare to hand-drawn baseline
+\State \textbf{Optional backup:} relax $y_i \in \{0,\dots,P\}$;
+       solve repeatedly for range of $O$ $\to$ Pareto frontier of $O$ vs $B$
+\end{algorithmic}
+\end{algorithm}
+
+\noindent\textbf{Key parameters:} $|I|$ up to 87,603; $|J|$ = beat centroids within one division;
+solved independently per division; $S$ empirically chosen per division.
+
+% ─────────────────────────────────────────────────────────────
+\section*{Algorithm 2 — Existing Infrastructure Evaluator}
+% ─────────────────────────────────────────────────────────────
+
+\begin{algorithm}[H]
+\caption{Existing LAPD Station Coverage Evaluator}
+\begin{algorithmic}[1]
+\State \textbf{Input:} LAPD crime CSV ($|I|=997{,}488$, \texttt{crime\_weight} $a_i$);
+       {\color{diff}21 fixed real station locations} as $J$ (no selection step);
+       $S = 2.5$ mi $= 4{,}023$ m
+\State \textbf{Distance:} OSMnx OSM graph projected to EPSG:4326;
+       {\color{diff}no OD matrix — ego-graph Dijkstra per station at evaluation time}
+\State \textbf{No facility selection:} {\color{diff}$J$ is fixed}, $x_j = 1$ for all $j$
+\State \textbf{For each station $j \in J$:}
+\Statex \quad Run Dijkstra$(G, j, \text{cutoff}=S)$ $\to$ reachable node set
+\Statex \quad Mark all incidents whose OSM node is reachable: $y_i \mathrel{+}= 1$
+\State \textbf{Compute} $O = \sum_i a_i \cdot \mathbf{1}[y_i \ge 1]$;
+       $B = \sum_i a_i \cdot y_i$
+\State \textbf{Output:} coverage statistics + map; {\color{diff}no optimisation performed}
+\end{algorithmic}
+\end{algorithm}
+
+\noindent\textbf{Key parameters:} $|J|=21$ (fixed); city-wide single pass;
+$S=2.5$ mi; $a_i =$ \texttt{crime\_weight}; no candidate generation step.
+
+% ─────────────────────────────────────────────────────────────
+\section*{Algorithm 3 — Fixed Greedy Optimizer}
+% ─────────────────────────────────────────────────────────────
+
+\begin{algorithm}[H]
+\caption{Fixed PPAC Optimizer (Greedy + Road-Network)}
+\begin{algorithmic}[1]
+\State \textbf{Input:} LAPD crime CSV ($|I|=997{,}488$, \texttt{crime\_weight} $a_i$);
+       city boundary GeoJSON; $P=21$; $S=2.5$ mi
+\State \textbf{Stage 1 — Candidate generation} {\color{diff}(data-driven, replaces existing beat polygons):}
+\Statex \quad Weighted Mini-Batch K-Means on incidents $\to$ 300 beat centroids $= J$
+\State \textbf{Distance:} {\color{diff}Two OSMnx graph projections:}
+\Statex \quad $G_\text{4326}$ for vectorised node snapping (KD-tree in degree space)
+\Statex \quad $G_\text{metric}$ (UTM) for Dijkstra (edge lengths unambiguously in metres)
+\State \textbf{Build coverage sets} $C_j \leftarrow \{i \in I \mid d_{ij} \le S\}$ for all $j \in J$
+       via Dijkstra$(G_\text{metric}, j, \text{cutoff}=S)$
+\State \textbf{Stage 2 — Greedy PPAC} {\color{diff}(replaces K-Means clustering of beat centres):}
+\Statex \quad $\text{covered} \leftarrow \emptyset$; \; $H \leftarrow \emptyset$
+\For{$k = 1$ \textbf{to} $P$}
+  \State $j^* \leftarrow \arg\max_{j \notin H}\; \sum_{i \in C_j \setminus \text{covered}} a_i$
+  \State $H \leftarrow H \cup \{j^*\}$; \quad $\text{covered} \leftarrow \text{covered} \cup C_{j^*}$
+\EndFor
+\State \textbf{Compute} $O = \sum_i a_i \cdot \mathbf{1}[i \in \text{covered}]$;
+       $B = \sum_i a_i \cdot |\{j \in H : i \in C_j\}|$
+\State \textbf{Output:} Voronoi beat map + sector map; coverage CSV
+\end{algorithmic}
+\end{algorithm}
+
+\noindent\textbf{Key parameters:} $|J|=300$ (derived); city-wide single pass;
+$P=21$; $S=2.5$ mi; greedy gives $(1-1/e)\approx 63\%$ approximation guarantee on $O$.
+
+% ─────────────────────────────────────────────────────────────
+\section*{Differences at a Glance}
+% ─────────────────────────────────────────────────────────────
+
+\renewcommand{\arraystretch}{1.35}
+\begin{tabularx}{\textwidth}{@{} l X X X @{}}
+\toprule
+\textbf{Aspect} & \textbf{PDF (Curtin)} & \textbf{Evaluator} & \textbf{Fixed Optimizer} \\
+\midrule
+\textbf{Purpose} & Optimize geography & Audit fixed stations & Optimize geography \\
+\textbf{Candidate set $J$} & Existing beat centroids & 21 real stations (fixed) & 300 K-Means centroids \\
+\textbf{Facility selection} & IP (proven optimal) & None — all selected & Greedy ($\ge 63\%$ opt.) \\
+\textbf{$P$} & Per-division (e.g.\ 5) & 21 (all used) & 21 \\
+\textbf{$S$} & 2 mi (1 mi Central) & 2.5 mi & 2.5 mi \\
+\textbf{$a_i$} & Signal Code 1--5 & \texttt{crime\_weight} & \texttt{crime\_weight} \\
+\textbf{Road network} & Proprietary NCTCOG & OSMnx EPSG:4326 & OSMnx UTM + 4326 \\
+\textbf{OD matrix} & All-to-all (external GIS) & None (ego-graph only) & Per-candidate ego-graph \\
+\textbf{Backup coverage} & Formal multi-obj.\ IP & Computed post-hoc & Computed post-hoc \\
+\textbf{Scope} & Per division & City-wide & City-wide \\
+\textbf{Solver} & CPLEX 8.1 & N/A & Greedy heuristic \\
+\bottomrule
+\end{tabularx}
+
+\bigskip
+\noindent\textbf{Why the evaluator outscored the original optimizer.}
+The original optimizer ran K-Means Stage 2 on beat centroids, minimizing Euclidean
+variance — an objective unrelated to $O$. The 21 real LAPD stations were
+historically sited near high-crime areas, so they outperformed geometrically-centered
+K-Means HQs on the coverage metric $O$. The fixed optimizer replaces Stage 2
+with the greedy algorithm that directly maximizes $O$, and uses $G_\text{metric}$
+for Dijkstra so that the road-distance cutoff is exact.
+
+\end{document}
