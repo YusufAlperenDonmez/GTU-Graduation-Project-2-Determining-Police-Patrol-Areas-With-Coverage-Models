@@ -1,0 +1,2 @@
+total_incidents,service_radius_mi,service_radius_m,num_candidates,num_sectors,ip_status,mip_gap,objective_z,incidents_covered,coverage_pct_count,maximal_covering_obj,coverage_pct_weighted,maximal_backup_obj,total_weight,runtime_seconds
+203535,1.5,2414.0,250,10,Optimal,0.0,597918.0,188345,92.54,597918.0,92.57,680496.0,645909.0,916.5
