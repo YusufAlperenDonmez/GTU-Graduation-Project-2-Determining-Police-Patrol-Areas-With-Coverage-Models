@@ -55,27 +55,29 @@ CRIME_DATA_PATH    = '../resources/cleaned_data.csv'
 BOUNDARY_FILE_PATH = '../resources/LA_AREA.geojson'
 
 # User-defined sub-area boundary coordinates
-USER_POLYGON_COORDS = [[-118.322754, 34.195901], [-118.482056, 34.025348], [-118.151093, 33.950195], [-118.035736, 34.179998], [-118.322754, 34.195901]]
+# USER_POLYGON_COORDS = None
+USER_POLYGON_COORDS = [[-118.753967, 34.354774], [-118.096161, 34.354774], [-118.122253, 33.694638], [-118.850098, 33.680925], [-118.753967, 34.354774]]
+# USER_POLYGON_COORDS = [[-118.322754, 34.195901], [-118.482056, 34.025348], [-118.151093, 33.950195], [-118.035736, 34.179998], [-118.322754, 34.195901]]
 
 NUM_BEATS   = 250        # |J|  candidate facility locations
-NUM_SECTORS = 10         # P    command centres to locate
+NUM_SECTORS = 12        # P    command centres to locate
 SERVICE_MI  = 1.8        # S    service radius in miles police station sayisi arttirmak yerine mile dusuruldu 
                             #   bunun sebebi hem ayni sayida polis istasyonu ile kiyas yapabilmek ve  
                             #   LA AREA icerisindeki trafik ile bakınca 2 mile gercekci bir uzaklik olmayabilir.
                             #   2.0 * 2.0 ile 1.8 * 1.8 kiyas yapildiginda oran 4.0 a 3.24 yuzdelik kiyas ise 100 - 83
 SERVICE_M   = SERVICE_MI * 1_609.34   # S in metres
 
-OUTPUT_IMG  = '../outputs/optimized/ppac_exact_optimal.png'
-OUTPUT_CSV  = '../outputs/optimized/ppac_exact_summary.csv'
-OSM_CACHE   = '../resources/la_drive_network.graphml'
+OUTPUT_IMG  = '../outputs/200beats/optimized/ppac_exact_optimal.png'
+OUTPUT_CSV  = '../outputs/200beats/optimized/ppac_exact_summary.csv'
+OSM_CACHE   = '../resources/200beats/la_drive_network.graphml'
 
 # ── NEW: UI Export paths ──────────────────────────────────────────────────────
-OUTPUT_STATIONS    = '../outputs/optimized/stations.csv'
-OUTPUT_INCIDENTS   = '../outputs/optimized/incidents_export.csv'
-OUTPUT_OPT_SUMMARY = '../outputs/optimized/optimization_summary.csv'
-OUTPUT_BEATS_GEO   = '../outputs/optimized/beat_polygons.geojson'
+OUTPUT_STATIONS    = '../outputs/200beats/optimized/stations.csv'
+OUTPUT_INCIDENTS   = '../outputs/200beats/optimized/incidents_export.csv'
+OUTPUT_OPT_SUMMARY = '../outputs/200beats/optimized/optimization_summary.csv'
+OUTPUT_BEATS_GEO   = '../outputs/200beats/optimized/beat_polygons.geojson'
 
-IP_TIME_LIMIT = 7200     # iki saat yetismesi icin
+IP_TIME_LIMIT = 720000     # iki yüz saat yetismesi icin
 
 IP_MIP_GAP    = 0.000      # feda edilecek percentage yok optimum sonuc
 

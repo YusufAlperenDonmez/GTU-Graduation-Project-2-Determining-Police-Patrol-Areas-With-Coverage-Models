@@ -1,0 +1,1073 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>PPAC — Patrol Coverage Intelligence</title>
+
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=IBM+Plex+Sans:wght@300;400;500;600&display=swap" rel="stylesheet">
+
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/PapaParse/5.4.1/papaparse.min.js"></script>
+
+<style>
+  :root {
+    --bg:        #0b0d11;
+    --surface:   #12151c;
+    --panel:     #181c26;
+    --border:    #252b3a;
+    --accent:    #e8c96a;
+    --accent2:   #4faaff;
+    --covered:   #3ddc84;
+    --uncovered: #ff5959;
+    --existing:  #b07aff;
+    --muted:     #5a6275;
+    --text:      #d4dae8;
+    --textdim:   #8b95aa;
+    --mono:      'IBM Plex Mono', monospace;
+    --sans:      'IBM Plex Sans', sans-serif;
+    --panel-w:   370px;
+  }
+
+  *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { height: 100%; background: var(--bg); color: var(--text); font-family: var(--sans); font-size: 13px; overflow: hidden; }
+
+  #app { display: flex; height: 100vh; }
+
+  #sidebar {
+    width: var(--panel-w);
+    min-width: var(--panel-w);
+    background: var(--surface);
+    border-right: 1px solid var(--border);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+    z-index: 1000;
+  }
+
+  #map-container { flex: 1; position: relative; }
+  #map { width: 100%; height: 100%; }
+
+  /* HEADER */
+  #header { padding: 14px 16px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  #header .logo { font-family: var(--mono); font-size: 10px; font-weight: 600; letter-spacing: 0.18em; text-transform: uppercase; color: var(--accent); margin-bottom: 4px; }
+  #header h1 { font-family: var(--sans); font-size: 16px; font-weight: 600; color: var(--text); line-height: 1.2; }
+  #header p { font-size: 11px; color: var(--textdim); margin-top: 3px; }
+
+  /* MODE TABS */
+  #mode-tabs { display: flex; border-bottom: 1px solid var(--border); flex-shrink: 0; }
+  .mode-tab {
+    flex: 1;
+    padding: 9px 4px;
+    text-align: center;
+    font-family: var(--mono);
+    font-size: 10px;
+    font-weight: 600;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--muted);
+    cursor: pointer;
+    border-bottom: 2px solid transparent;
+    transition: all 0.15s;
+    user-select: none;
+  }
+  .mode-tab:hover { color: var(--textdim); }
+  .mode-tab.active { color: var(--accent); border-bottom-color: var(--accent); }
+
+  /* FILE LOADER */
+  #loader { padding: 10px 16px 12px; border-bottom: 1px solid var(--border); flex-shrink: 0; overflow-y: auto; max-height: 320px; }
+  #loader::-webkit-scrollbar { width: 3px; }
+  #loader::-webkit-scrollbar-thumb { background: var(--border); }
+
+  .loader-section { margin-bottom: 10px; }
+  .loader-title { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .loader-title.opt { color: var(--accent); }
+  .loader-title.exist { color: var(--existing); }
+
+  .file-row { display: flex; align-items: center; gap: 6px; margin-bottom: 5px; }
+  .file-row label { font-size: 11px; color: var(--textdim); width: 90px; flex-shrink: 0; }
+  .file-row input[type="file"] {
+    flex: 1; font-size: 10px; font-family: var(--mono); color: var(--textdim);
+    background: var(--bg); border: 1px solid var(--border); border-radius: 3px;
+    padding: 3px 6px; cursor: pointer;
+  }
+  .file-row input[type="file"]::-webkit-file-upload-button { display: none; }
+
+  .status-dot { width: 7px; height: 7px; border-radius: 50%; background: var(--muted); flex-shrink: 0; transition: background 0.3s; }
+  .status-dot.ok  { background: var(--covered); }
+
+  #load-btn {
+    width: 100%; margin-top: 8px; padding: 8px;
+    background: var(--accent); color: #0b0d11;
+    font-family: var(--mono); font-size: 11px; font-weight: 600;
+    letter-spacing: 0.1em; text-transform: uppercase;
+    border: none; border-radius: 3px; cursor: pointer; transition: opacity 0.2s;
+  }
+  #load-btn:hover { opacity: 0.85; }
+  #load-btn:disabled { opacity: 0.35; cursor: not-allowed; }
+
+  /* SUMMARY PANELS */
+  #summary-panel { padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; display: none; }
+  .section-label { font-family: var(--mono); font-size: 9px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+
+  /* Single mode KPI grid */
+  .kpi-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 7px; }
+  .kpi { background: var(--panel); border: 1px solid var(--border); border-radius: 4px; padding: 8px 10px; }
+  .kpi .val { font-family: var(--mono); font-size: 17px; font-weight: 600; color: var(--accent); line-height: 1; }
+  .kpi .val.exist-color { color: var(--existing); }
+  .kpi .lbl { font-size: 10px; color: var(--textdim); margin-top: 3px; }
+
+  .coverage-bar { margin-top: 8px; height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; }
+  .coverage-bar-fill { height: 100%; background: linear-gradient(90deg, var(--covered), var(--accent2)); border-radius: 3px; transition: width 0.8s ease; width: 0%; }
+  .coverage-bar-fill.exist-fill { background: linear-gradient(90deg, var(--existing), #8855cc); }
+  .coverage-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--textdim); margin-top: 3px; }
+
+  /* Compare mode */
+  #compare-panel { padding: 12px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; display: none; }
+  .compare-header { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 8px; }
+  .compare-col-label {
+    font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase;
+    padding: 4px 8px; border-radius: 3px; text-align: center;
+  }
+  .compare-col-label.opt { background: rgba(232,201,106,0.12); color: var(--accent); border: 1px solid rgba(232,201,106,0.3); }
+  .compare-col-label.exist { background: rgba(176,122,255,0.12); color: var(--existing); border: 1px solid rgba(176,122,255,0.3); }
+
+  .compare-row { display: grid; grid-template-columns: 80px 1fr 1fr; gap: 4px; align-items: center; margin-bottom: 5px; }
+  .compare-row-key { font-size: 10px; color: var(--textdim); }
+  .compare-val { font-family: var(--mono); font-size: 13px; font-weight: 600; text-align: center; padding: 5px 6px; border-radius: 3px; }
+  .compare-val.opt { background: rgba(232,201,106,0.08); color: var(--accent); }
+  .compare-val.exist { background: rgba(176,122,255,0.08); color: var(--existing); }
+  .compare-val.better { background: rgba(61,220,132,0.12); color: var(--covered); }
+  .compare-val.worse  { background: rgba(255,89,89,0.12);  color: var(--uncovered); }
+
+  .delta-bar-wrap { margin-top: 8px; }
+  .delta-bar-label { display: flex; justify-content: space-between; font-size: 10px; color: var(--textdim); margin-bottom: 3px; }
+  .delta-bar { height: 5px; background: var(--border); border-radius: 3px; overflow: hidden; position: relative; }
+  .delta-bar-exist { height: 100%; background: var(--existing); border-radius: 3px; transition: width 0.8s; }
+  .delta-bar-opt   { height: 100%; background: var(--covered); border-radius: 3px; transition: width 0.8s; position: absolute; top: 0; left: 0; }
+
+  /* CONTROLS */
+  #controls { padding: 8px 16px; border-bottom: 1px solid var(--border); flex-shrink: 0; display: none; gap: 5px; flex-wrap: wrap; }
+  .toggle-btn {
+    padding: 4px 9px; font-family: var(--mono); font-size: 10px; font-weight: 500;
+    letter-spacing: 0.07em; border-radius: 3px; border: 1px solid var(--border);
+    background: transparent; color: var(--textdim); cursor: pointer; transition: all 0.15s;
+  }
+  .toggle-btn.active { background: var(--panel); border-color: var(--accent); color: var(--accent); }
+  .toggle-btn.active.exist-btn { border-color: var(--existing); color: var(--existing); }
+  .toggle-btn:hover:not(.active) { border-color: var(--textdim); color: var(--text); }
+
+  /* STATION LIST */
+  #station-panel { flex: 1; overflow-y: auto; display: none; }
+  #station-panel::-webkit-scrollbar { width: 4px; }
+  #station-panel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .station-list-header {
+    padding: 10px 16px 7px; font-family: var(--mono); font-size: 9px;
+    letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted);
+    position: sticky; top: 0; background: var(--surface); z-index: 10; border-bottom: 1px solid var(--border);
+  }
+
+  .station-item {
+    padding: 9px 16px; border-bottom: 1px solid var(--border);
+    cursor: pointer; transition: background 0.12s; display: flex; align-items: center; gap: 8px;
+  }
+  .station-item:hover { background: var(--panel); }
+  .station-item.selected { background: var(--panel); border-left: 3px solid var(--accent); padding-left: 13px; }
+
+  .station-dot { width: 9px; height: 9px; border-radius: 50%; flex-shrink: 0; }
+  .station-info { flex: 1; }
+  .station-name { font-family: var(--mono); font-size: 11px; font-weight: 500; color: var(--text); }
+  .station-meta { font-size: 10px; color: var(--textdim); margin-top: 1px; }
+  .station-bar { width: 50px; height: 3px; background: var(--border); border-radius: 2px; overflow: hidden; flex-shrink: 0; }
+  .station-bar-fill { height: 100%; border-radius: 2px; }
+  .station-badge { font-family: var(--mono); font-size: 9px; padding: 2px 5px; border-radius: 2px; flex-shrink: 0; }
+  .station-badge.opt-badge   { background: rgba(232,201,106,0.15); color: var(--accent); }
+  .station-badge.exist-badge { background: rgba(176,122,255,0.15); color: var(--existing); }
+
+  /* DETAIL PANEL */
+  #detail-panel {
+    position: absolute; top: 12px; right: 12px; width: 290px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 6px; z-index: 1000; display: none;
+    box-shadow: 0 8px 32px rgba(0,0,0,0.5); overflow: hidden;
+  }
+  #detail-panel .dp-header {
+    padding: 10px 14px 9px; background: var(--panel);
+    border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+  }
+  #detail-panel .dp-title { font-family: var(--mono); font-size: 12px; font-weight: 600; color: var(--accent); }
+  #detail-close { cursor: pointer; color: var(--muted); font-size: 16px; line-height: 1; padding: 0 2px; }
+  #detail-close:hover { color: var(--text); }
+  #detail-body { padding: 10px 14px; }
+  .dp-row { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; border-bottom: 1px solid var(--border); }
+  .dp-row:last-child { border-bottom: none; }
+  .dp-key { font-size: 11px; color: var(--textdim); }
+  .dp-val { font-family: var(--mono); font-size: 12px; font-weight: 500; color: var(--text); }
+  .dp-val.hi   { color: var(--accent); }
+  .dp-val.ok   { color: var(--covered); }
+  .dp-val.warn { color: var(--accent2); }
+
+  /* TOOLTIP */
+  .leaflet-tooltip.inc-tip {
+    background: var(--surface); border: 1px solid var(--border); color: var(--text);
+    font-family: var(--mono); font-size: 10px; padding: 4px 8px;
+    border-radius: 3px; box-shadow: none; white-space: nowrap;
+  }
+
+  .leaflet-control-zoom a { background: var(--surface) !important; border-color: var(--border) !important; color: var(--text) !important; }
+  .leaflet-control-attribution { background: rgba(11,13,17,0.7) !important; color: var(--muted) !important; font-size: 9px !important; }
+
+  /* EMPTY STATE */
+  #empty-state { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; padding: 24px 20px; text-align: center; color: var(--muted); }
+  #empty-state svg { opacity: 0.2; margin-bottom: 14px; }
+  #empty-state p { font-size: 11px; line-height: 1.6; }
+
+  /* LEGEND */
+  #legend {
+    position: absolute; bottom: 20px; left: 12px;
+    background: var(--surface); border: 1px solid var(--border);
+    border-radius: 5px; padding: 10px 12px; z-index: 1000; display: none; min-width: 160px;
+  }
+  .legend-title { font-family: var(--mono); font-size: 9px; letter-spacing: 0.12em; text-transform: uppercase; color: var(--muted); margin-bottom: 8px; }
+  .legend-row { display: flex; align-items: center; gap: 7px; margin-bottom: 5px; font-size: 10px; color: var(--textdim); }
+  .legend-swatch { width: 10px; height: 10px; border-radius: 2px; flex-shrink: 0; }
+  .legend-swatch.circle { border-radius: 50%; }
+</style>
+</head>
+<body>
+
+<div id="app">
+  <div id="sidebar">
+    <div id="header">
+      <div class="logo">LAPD · PPAC System</div>
+      <h1>Patrol Coverage Intelligence</h1>
+      <p>MCLP Optimization — Comparison View</p>
+    </div>
+
+    <!-- Mode Tabs -->
+    <div id="mode-tabs">
+      <div class="mode-tab active" data-mode="optimized">Optimized</div>
+      <div class="mode-tab" data-mode="existing">Existing</div>
+      <div class="mode-tab" data-mode="compare">Compare</div>
+    </div>
+
+    <!-- File Loader -->
+    <div id="loader">
+      <div class="loader-section">
+        <div class="loader-title opt">Optimized State</div>
+        <div class="file-row"><label>Stations</label><input type="file" id="file-stations" accept=".csv"><div class="status-dot" id="dot-stations"></div></div>
+        <div class="file-row"><label>Incidents</label><input type="file" id="file-incidents" accept=".csv"><div class="status-dot" id="dot-incidents"></div></div>
+        <div class="file-row"><label>Summary</label><input type="file" id="file-summary" accept=".csv"><div class="status-dot" id="dot-summary"></div></div>
+        <div class="file-row"><label>Beat Polygons</label><input type="file" id="file-beats" accept=".geojson,.json"><div class="status-dot" id="dot-beats"></div></div>
+      </div>
+      <div class="loader-section">
+        <div class="loader-title exist">Existing State</div>
+        <div class="file-row"><label>Stations</label><input type="file" id="file-exist-stations" accept=".csv"><div class="status-dot" id="dot-exist-stations"></div></div>
+        <div class="file-row"><label>Summary</label><input type="file" id="file-exist-summary" accept=".csv"><div class="status-dot" id="dot-exist-summary"></div></div>
+      </div>
+      <div class="loader-section">
+        <div class="loader-title">Shared</div>
+        <div class="file-row"><label>LA Area</label><input type="file" id="file-laarea" accept=".geojson,.json"><div class="status-dot" id="dot-laarea"></div></div>
+      </div>
+      <button id="load-btn" disabled>Load & Visualise</button>
+    </div>
+
+    <!-- Optimized / Existing Summary KPIs -->
+    <div id="summary-panel">
+      <div class="section-label" id="summary-label">Optimization Summary</div>
+      <div class="kpi-grid">
+        <div class="kpi"><div class="val" id="kpi-coverage">—</div><div class="lbl">Coverage %</div></div>
+        <div class="kpi"><div class="val" id="kpi-stations">—</div><div class="lbl">Stations</div></div>
+        <div class="kpi"><div class="val" id="kpi-incidents">—</div><div class="lbl">Incidents</div></div>
+        <div class="kpi"><div class="val" id="kpi-radius">—</div><div class="lbl">Service Radius</div></div>
+      </div>
+      <div class="coverage-bar"><div class="coverage-bar-fill" id="cov-bar"></div></div>
+      <div class="coverage-label"><span id="cov-label-left">Covered</span><span id="cov-label-right"></span></div>
+    </div>
+
+    <!-- Compare Panel -->
+    <div id="compare-panel">
+      <div class="compare-header">
+        <div class="compare-col-label opt">Optimized</div>
+        <div class="compare-col-label exist">Existing</div>
+      </div>
+      <div id="compare-rows"></div>
+      <div class="delta-bar-wrap">
+        <div class="delta-bar-label"><span>Coverage comparison</span></div>
+        <div class="delta-bar" id="delta-bar-wrap">
+          <div class="delta-bar-exist" id="delta-bar-exist" style="width:0%"></div>
+          <div class="delta-bar-opt"   id="delta-bar-opt"   style="width:0%"></div>
+        </div>
+        <div class="coverage-label" style="margin-top:3px">
+          <span style="color:var(--existing)">■ Existing</span>
+          <span style="color:var(--covered)">■ Optimized</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- Layer Controls -->
+    <div id="controls">
+      <button class="toggle-btn active" id="btn-beats">Beats</button>
+      <button class="toggle-btn" id="btn-laarea">LA Area</button>
+      <button class="toggle-btn active" id="btn-stations">Opt. Stations</button>
+      <button class="toggle-btn active" id="btn-incidents">Incidents</button>
+      <button class="toggle-btn" id="btn-radius">Show Radius</button>
+      <button class="toggle-btn" id="btn-uncovered">Uncovered Only</button>
+      <button class="toggle-btn" id="btn-exist-stations">Exist. Stations</button>
+    </div>
+
+    <!-- Station List -->
+    <div id="station-panel">
+      <div class="station-list-header" id="station-list-label">Stations — click to inspect</div>
+      <div id="station-list"></div>
+    </div>
+
+    <!-- Empty State -->
+    <div id="empty-state">
+      <svg width="48" height="48" viewBox="0 0 48 48" fill="none">
+        <circle cx="24" cy="24" r="22" stroke="#4faaff" stroke-width="2"/>
+        <path d="M24 14v12M24 32v2" stroke="#4faaff" stroke-width="2.5" stroke-linecap="round"/>
+      </svg>
+      <p>Load output files to begin.<br>Optimized files required.<br>Existing files enable comparison.</p>
+    </div>
+  </div>
+
+  <div id="map-container">
+    <div id="map"></div>
+
+    <div id="detail-panel">
+      <div class="dp-header">
+        <span class="dp-title" id="dp-title">Station Detail</span>
+        <span id="detail-close">✕</span>
+      </div>
+      <div id="detail-body"></div>
+    </div>
+
+    <div id="legend">
+      <div class="legend-title">Legend</div>
+      <div class="legend-row" id="leg-opt"><div class="legend-swatch" style="background:#e8c96a;border-radius:3px;border:2px solid rgba(255,255,255,0.4)"></div>Optimized Station</div>
+      <div class="legend-row" id="leg-exist" style="display:none"><div class="legend-swatch" style="background:transparent;border:2px solid #b07aff;border-radius:3px"></div>Existing Station</div>
+      <div class="legend-row"><div class="legend-swatch circle" style="background:#3ddc84;opacity:0.8"></div>Covered Incident</div>
+      <div class="legend-row"><div class="legend-swatch circle" style="background:#ff5959;opacity:0.8"></div>Uncovered Incident</div>
+      <div class="legend-row" id="leg-beats"><div class="legend-swatch" style="background:transparent;border:1.5px solid rgba(79,170,255,0.5)"></div>Beat Boundary</div>
+      <div class="legend-row" id="leg-laarea" style="display:none"><div class="legend-swatch" style="background:transparent;border:2px dashed #e8c96a;opacity:0.7"></div>LA Area</div>
+    </div>
+  </div>
+</div>
+
+<script>
+// ─────────────────────────────────────────────────────────────────────────────
+// STATE
+// ─────────────────────────────────────────────────────────────────────────────
+const state = {
+  mode: 'optimized',           // 'optimized' | 'existing' | 'compare'
+  stations: [],
+  incidents: [],
+  summary: null,
+  beats: null,
+  laArea: null,
+  existStations: [],
+  existSummary: null,
+  selectedStation: null,
+  selectedIsExisting: false,
+  showBeats: true,
+  showLaArea: false,
+  showStations: true,
+  showIncidents: true,
+  showRadius: false,
+  showUncoveredOnly: false,
+  showExistStations: true,
+};
+
+let map, beatLayer, stationLayer, existStationLayer, incidentLayer, radiusLayer, laAreaLayer;
+
+const files = {
+  stations: null, incidents: null, summary: null,
+  beats: null, laarea: null,
+  existStations: null, existSummary: null,
+};
+
+const SECTOR_COLORS = [
+  '#4e79a7','#f28e2b','#e15759','#76b7b2','#59a14f',
+  '#edc948','#b07aa1','#ff9da7','#9c755f','#bab0ac',
+  '#d37295','#a0cbe8','#ffbe7d','#8cd17d','#b6992d',
+  '#499894','#86bcb6','#e15759','#fabfd2','#d4a6c8',
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// SUMMARY PARSING — handles both CSV formats:
+//   Format A (metric/value): rows like { metric: "service_radius_mi", value: 1.5 }
+//   Format B (single row):   { total_incidents: 100, covered_incidents: 80, service_radius_mi: 1.5, ... }
+// ─────────────────────────────────────────────────────────────────────────────
+function parseSummaryCSV(text) {
+  const rows = Papa.parse(text, { header: true, dynamicTyping: true }).data.filter(r => r && Object.keys(r).length > 1);
+  if (!rows.length) return null;
+
+  // Format A: has a 'metric' column
+  if (rows[0].metric !== undefined) {
+    const obj = {};
+    rows.forEach(r => { if (r.metric) obj[r.metric] = r.value; });
+    return obj;
+  }
+  // Format B: single row with named columns
+  return rows[0];
+}
+
+// Extract service radius (miles) from a parsed summary object, regardless of key name
+function getRadiusMi(summary) {
+  if (!summary) return null;
+  const val = summary.service_radius_mi
+           ?? summary['Service distance (mi)']
+           ?? summary.radius_mi
+           ?? summary.radius
+           ?? null;
+  return val !== null ? +val : null;
+}
+
+// Extract service radius (metres) from a parsed summary object
+function getRadiusM(summary) {
+  if (!summary) return null;
+  const val = summary.service_radius_m
+           ?? summary['Service distance (m)']
+           ?? summary.radius_m
+           ?? null;
+  if (val !== null) return +val;
+  // Derive from miles if available
+  const mi = getRadiusMi(summary);
+  return mi !== null ? mi * 1609.34 : null;
+}
+
+// Coverage percentage from summary or computed from incidents array
+function getCovPct(summary, incidents) {
+  if (summary) {
+    const val = summary.coverage_pct ?? summary.coverage ?? summary['Coverage (%)'] ?? null;
+    if (val !== null) return +val;
+  }
+  if (incidents && incidents.length) {
+    const cov = incidents.filter(i => i.covered === 1).length;
+    return (100 * cov / incidents.length);
+  }
+  return null;
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MAP INIT
+// ─────────────────────────────────────────────────────────────────────────────
+function initMap() {
+  map = L.map('map', { center: [34.05, -118.25], zoom: 12, zoomControl: true });
+  L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {
+    attribution: '© OpenStreetMap contributors © CARTO', maxZoom: 19,
+  }).addTo(map);
+  beatLayer        = L.layerGroup().addTo(map);
+  laAreaLayer      = L.layerGroup();
+  stationLayer     = L.layerGroup().addTo(map);
+  existStationLayer= L.layerGroup();
+  incidentLayer    = L.layerGroup().addTo(map);
+  radiusLayer      = L.layerGroup();
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// FILE BINDING
+// ─────────────────────────────────────────────────────────────────────────────
+function bindFileInputs() {
+  const pairs = [
+    ['file-stations',      'stations',      'dot-stations'],
+    ['file-incidents',     'incidents',     'dot-incidents'],
+    ['file-summary',       'summary',       'dot-summary'],
+    ['file-beats',         'beats',         'dot-beats'],
+    ['file-laarea',        'laarea',        'dot-laarea'],
+    ['file-exist-stations','existStations', 'dot-exist-stations'],
+    ['file-exist-summary', 'existSummary',  'dot-exist-summary'],
+  ];
+  pairs.forEach(([inputId, key, dotId]) => {
+    document.getElementById(inputId).addEventListener('change', e => {
+      const f = e.target.files[0];
+      if (!f) return;
+      files[key] = f;
+      document.getElementById(dotId).classList.add('ok');
+      checkLoadReady();
+    });
+  });
+  document.getElementById('load-btn').addEventListener('click', loadAllFiles);
+}
+
+function checkLoadReady() {
+  document.getElementById('load-btn').disabled = !(files.stations && files.incidents);
+}
+
+async function readFile(file) {
+  return new Promise(resolve => {
+    const r = new FileReader();
+    r.onload = e => resolve(e.target.result);
+    r.readAsText(file);
+  });
+}
+
+async function loadAllFiles() {
+  document.getElementById('load-btn').disabled = true;
+  document.getElementById('load-btn').textContent = 'Loading…';
+  try {
+    state.stations = Papa.parse(await readFile(files.stations), { header: true, dynamicTyping: true }).data
+      .filter(r => r.station_id != null && r.lat != null);
+
+    state.incidents = Papa.parse(await readFile(files.incidents), { header: true, dynamicTyping: true }).data
+      .filter(r => r.incident_id != null && r.lat != null);
+
+    state.summary = files.summary ? parseSummaryCSV(await readFile(files.summary)) : null;
+    state.beats   = files.beats   ? JSON.parse(await readFile(files.beats))   : null;
+    state.laArea  = files.laarea  ? JSON.parse(await readFile(files.laarea))  : null;
+
+    state.existStations = files.existStations
+      ? Papa.parse(await readFile(files.existStations), { header: true, dynamicTyping: true }).data
+          .filter(r => r.station_id != null && r.lat != null)
+      : [];
+
+    state.existSummary = files.existSummary ? parseSummaryCSV(await readFile(files.existSummary)) : null;
+
+    renderAll();
+  } catch (err) {
+    alert('Error loading files: ' + err.message);
+    console.error(err);
+    document.getElementById('load-btn').disabled = false;
+    document.getElementById('load-btn').textContent = 'Load & Visualise';
+  }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RENDER ALL
+// ─────────────────────────────────────────────────────────────────────────────
+function renderAll() {
+  document.getElementById('empty-state').style.display = 'none';
+  document.getElementById('controls').style.display = 'flex';
+  document.getElementById('station-panel').style.display = 'block';
+  document.getElementById('legend').style.display = 'block';
+
+  updatePanels();
+  renderLaArea();
+  renderBeats();
+  renderIncidents();
+  renderStations();
+  renderExistStations();
+  renderStationList();
+  fitMapToBounds();
+
+  document.getElementById('load-btn').textContent = 'Reload';
+  document.getElementById('load-btn').disabled = false;
+
+  // Show/hide existing station legend row
+  document.getElementById('leg-exist').style.display =
+    state.existStations.length ? '' : 'none';
+  document.getElementById('leg-laarea').style.display =
+    state.laArea ? '' : 'none';
+  document.getElementById('leg-beats').style.display =
+    state.beats ? '' : 'none';
+}
+
+function updatePanels() {
+  const m = state.mode;
+  const sumPanel     = document.getElementById('summary-panel');
+  const cmpPanel     = document.getElementById('compare-panel');
+  const listLabel    = document.getElementById('station-list-label');
+  const summaryLabel = document.getElementById('summary-label');
+
+  if (m === 'compare') {
+    sumPanel.style.display = 'none';
+    cmpPanel.style.display = 'block';
+    renderComparePanel();
+    listLabel.textContent = 'Both States — click to inspect';
+  } else {
+    sumPanel.style.display = 'block';
+    cmpPanel.style.display = 'none';
+    if (m === 'optimized') {
+      summaryLabel.textContent = 'Optimization Summary';
+      renderSummaryKPIs(state.stations, state.incidents, state.summary, false);
+    } else {
+      summaryLabel.textContent = 'Existing State Summary';
+      renderSummaryKPIs(state.existStations, state.incidents, state.existSummary, true);
+    }
+    listLabel.textContent = m === 'existing'
+      ? 'Existing Stations — click to inspect'
+      : 'Police Stations — click to inspect';
+  }
+}
+
+function renderSummaryKPIs(stations, incidents, summary, isExist) {
+  const totalInc   = incidents.length;
+  const coveredInc = incidents.filter(i => i.covered === 1).length;
+
+  // Use summary coverage pct if available; otherwise compute from incidents
+  let pct = getCovPct(summary, incidents);
+  const pctStr = pct !== null ? pct.toFixed(1) + '%' : '—';
+
+  const radiusMi = getRadiusMi(summary);
+  const radiusStr = radiusMi !== null ? radiusMi.toFixed(2) + ' mi' : (summary ? '—' : '1.50 mi');
+
+  document.getElementById('kpi-coverage').textContent  = pctStr;
+  document.getElementById('kpi-coverage').className    = 'val' + (isExist ? ' exist-color' : '');
+  document.getElementById('kpi-stations').textContent  = stations.length;
+  document.getElementById('kpi-incidents').textContent = totalInc.toLocaleString();
+  document.getElementById('kpi-radius').textContent    = radiusStr;
+
+  const barPct = pct !== null ? pct.toFixed(1) : 0;
+  const bar    = document.getElementById('cov-bar');
+  bar.style.width = barPct + '%';
+  bar.className   = 'coverage-bar-fill' + (isExist ? ' exist-fill' : '');
+
+  document.getElementById('cov-label-left').textContent  = coveredInc.toLocaleString() + ' covered';
+  document.getElementById('cov-label-right').textContent = (totalInc - coveredInc).toLocaleString() + ' uncovered';
+}
+
+function renderComparePanel() {
+  const hasExist = state.existStations.length > 0;
+  const inc = state.incidents;
+  const totalInc   = inc.length;
+  const optCovered = inc.filter(i => i.covered === 1).length;
+
+  const optPct     = getCovPct(state.summary, inc);
+  const existPct   = getCovPct(state.existSummary, null);
+  const optRadius  = getRadiusMi(state.summary);
+  const existRadius= getRadiusMi(state.existSummary);
+
+  const fmt = (v, digits=1) => v !== null && v !== undefined ? (+v).toFixed(digits) : '—';
+
+  const optCovPctNum  = optPct   !== null ? +optPct   : null;
+  const existCovPctNum= existPct !== null ? +existPct : null;
+
+  // Build delta for each metric; highlight which is better
+  const rows = [
+    {
+      key: 'Stations',
+      opt:   state.stations.length,
+      exist: hasExist ? state.existStations.length : '—',
+      higherIsBetter: false,  // fewer stations for same coverage = better
+    },
+    {
+      key: 'Coverage %',
+      opt:   optCovPctNum  !== null ? optCovPctNum.toFixed(1)  + '%' : '—',
+      exist: existCovPctNum!== null ? existCovPctNum.toFixed(1)+ '%' : '—',
+      optNum: optCovPctNum, existNum: existCovPctNum,
+      higherIsBetter: true,
+    },
+    {
+      key: 'Incidents',
+      opt:   totalInc.toLocaleString(),
+      exist: totalInc.toLocaleString(),
+      noComp: true,
+    },
+    {
+      key: 'Radius',
+      opt:   optRadius   !== null ? optRadius.toFixed(2)  + ' mi' : '—',
+      exist: existRadius !== null ? existRadius.toFixed(2)+ ' mi' : '—',
+      noComp: true,
+    },
+  ];
+
+  const container = document.getElementById('compare-rows');
+  container.innerHTML = rows.map(r => {
+    let optClass   = 'compare-val opt';
+    let existClass = 'compare-val exist';
+
+    if (!r.noComp && r.optNum !== undefined && r.existNum !== undefined &&
+        r.optNum !== null && r.existNum !== null) {
+      if (r.higherIsBetter) {
+        optClass   += r.optNum   >= r.existNum ? ' better' : ' worse';
+        existClass += r.existNum >= r.optNum   ? ' better' : ' worse';
+      } else {
+        optClass   += r.optNum   <= r.existNum ? ' better' : ' worse';
+        existClass += r.existNum <= r.optNum   ? ' better' : ' worse';
+      }
+    } else if (!r.noComp && r.key === 'Stations') {
+      const on = state.stations.length;
+      const en = hasExist ? state.existStations.length : null;
+      if (en !== null) {
+        optClass   += on <= en ? ' better' : ' worse';
+        existClass += en <= on ? ' better' : ' worse';
+      }
+    }
+
+    return `<div class="compare-row">
+      <span class="compare-row-key">${r.key}</span>
+      <span class="${optClass}">${r.opt}</span>
+      <span class="${existClass}">${r.exist}</span>
+    </div>`;
+  }).join('');
+
+  // Delta bar
+  const existBarW = existCovPctNum !== null ? existCovPctNum.toFixed(1) : 0;
+  const optBarW   = optCovPctNum   !== null ? optCovPctNum.toFixed(1)   : 0;
+  document.getElementById('delta-bar-exist').style.width = existBarW + '%';
+  document.getElementById('delta-bar-opt').style.width   = optBarW   + '%';
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// LAYER RENDERING
+// ─────────────────────────────────────────────────────────────────────────────
+function renderLaArea() {
+  laAreaLayer.clearLayers();
+  laAreaLayer.remove();
+  if (!state.laArea || !state.showLaArea) return;
+  L.geoJSON(state.laArea, {
+    style: { fillColor:'transparent', fillOpacity:0, color:'#e8c96a', weight:2, dashArray:'6 4', opacity:0.7 }
+  }).addTo(laAreaLayer);
+  laAreaLayer.addTo(map);
+}
+
+function renderBeats() {
+  beatLayer.clearLayers();
+  if (!state.beats || !state.showBeats) return;
+  state.beats.features.forEach(feat => {
+    const sid   = feat.properties.sector_id ?? 0;
+    const color = SECTOR_COLORS[sid % SECTOR_COLORS.length];
+    beatLayer.addLayer(L.geoJSON(feat, {
+      style: { fillColor:color, fillOpacity:0.15, color:'rgba(79,170,255,0.3)', weight:0.8 }
+    }));
+  });
+}
+
+function renderIncidents() {
+  incidentLayer.clearLayers();
+  if (!state.showIncidents) return;
+
+  const data = state.showUncoveredOnly
+    ? state.incidents.filter(i => i.covered === 0)
+    : state.incidents;
+
+  data.forEach(inc => {
+    const color = inc.covered === 1 ? '#3ddc84' : '#ff5959';
+    const r     = Math.max(2, Math.min(5, 2 + (inc.crime_weight || 1)));
+    const m     = L.circleMarker([inc.lat, inc.lon], {
+      radius: r, fillColor: color, color:'transparent', fillOpacity:0.55, interactive:true,
+    });
+    const tip = [
+      `<b>Incident #${inc.incident_id}</b>`,
+      `Weight: ${(+inc.crime_weight).toFixed(2)}`,
+      `Status: ${inc.covered === 1 ? '✓ Covered' : '✗ Uncovered'}`,
+      inc.primary_station >= 0 ? `Station: ${inc.primary_station}` : '',
+      inc.crm_cd_desc ? `Type: ${inc.crm_cd_desc}` : '',
+    ].filter(Boolean).join('<br>');
+    m.bindTooltip(tip, { className:'inc-tip', sticky:true });
+    incidentLayer.addLayer(m);
+  });
+}
+
+function makeStationIcon(sid, color, isExisting) {
+  if (isExisting) {
+    return L.divIcon({
+      html: `<div style="
+        width:20px;height:20px;
+        background:transparent;
+        border:2.5px solid ${color};
+        border-radius:4px;
+        box-shadow:0 2px 8px rgba(0,0,0,0.6);
+        display:flex;align-items:center;justify-content:center;
+        font-family:'IBM Plex Mono',monospace;
+        font-size:8px;font-weight:600;color:${color};
+      ">${sid}</div>`,
+      iconSize:[20,20], iconAnchor:[10,10], className:'',
+    });
+  }
+  return L.divIcon({
+    html: `<div style="
+      width:22px;height:22px;
+      background:${color};
+      border:3px solid #fff;
+      border-radius:4px;
+      box-shadow:0 2px 8px rgba(0,0,0,0.6);
+      display:flex;align-items:center;justify-content:center;
+      font-family:'IBM Plex Mono',monospace;
+      font-size:9px;font-weight:600;color:#000;
+    ">${sid}</div>`,
+    iconSize:[22,22], iconAnchor:[11,11], className:'',
+  });
+}
+
+function renderStations() {
+  stationLayer.clearLayers();
+  radiusLayer.clearLayers();
+  if (!state.showStations) return;
+
+  const radiusM = getRadiusM(state.summary);
+
+  state.stations.forEach(st => {
+    const sid   = st.station_id;
+    const color = SECTOR_COLORS[sid % SECTOR_COLORS.length];
+    const marker = L.marker([st.lat, st.lon], { icon: makeStationIcon(sid, color, false), zIndexOffset: 1000 });
+    marker.on('click', () => selectStation(sid, false));
+
+    const covPct = st.coverage_pct !== undefined ? st.coverage_pct + '%' : '—';
+    marker.bindTooltip(
+      `<b>Station ${sid}</b><br>Covers: ${st.incidents_covered} incidents<br>Coverage: ${covPct}`,
+      { className:'inc-tip' }
+    );
+    stationLayer.addLayer(marker);
+
+    if (state.showRadius && radiusM !== null) {
+      radiusLayer.addLayer(L.circle([st.lat, st.lon], {
+        radius: radiusM, color, weight:1.5, fillOpacity:0.05, fillColor:color, dashArray:'4 4',
+      }));
+    }
+  });
+
+  if (state.showRadius) radiusLayer.addTo(map);
+  else radiusLayer.remove();
+}
+
+function renderExistStations() {
+  existStationLayer.clearLayers();
+  existStationLayer.remove();
+
+  const shouldShow = state.showExistStations
+    && state.existStations.length > 0
+    && (state.mode === 'existing' || state.mode === 'compare');
+
+  if (!shouldShow) return;
+
+  const existRadiusM = getRadiusM(state.existSummary);
+
+  state.existStations.forEach(st => {
+    const sid    = st.station_id;
+    const color  = '#b07aff';
+    const marker = L.marker([st.lat, st.lon], {
+      icon: makeStationIcon(sid, color, true),
+      zIndexOffset: 900,
+    });
+    marker.on('click', () => selectStation(sid, true));
+
+    const covPct = st.coverage_pct !== undefined ? st.coverage_pct + '%' : '—';
+    marker.bindTooltip(
+      `<b>[Existing] Station ${sid}</b><br>Covers: ${st.incidents_covered ?? '—'} incidents<br>Coverage: ${covPct}`,
+      { className:'inc-tip' }
+    );
+    existStationLayer.addLayer(marker);
+
+    if (state.showRadius && existRadiusM !== null) {
+      const circle = L.circle([st.lat, st.lon], {
+        radius: existRadiusM, color: '#b07aff', weight:1.5, fillOpacity:0.04,
+        fillColor:'#b07aff', dashArray:'4 4',
+      });
+      existStationLayer.addLayer(circle);
+    }
+  });
+
+  existStationLayer.addTo(map);
+}
+
+function renderStationList() {
+  const container = document.getElementById('station-list');
+  container.innerHTML = '';
+  const m = state.mode;
+
+  if (m === 'compare') {
+    // Show both lists with badges
+    renderStationListSection(container, state.stations, false);
+    renderStationListSection(container, state.existStations, true);
+  } else if (m === 'existing') {
+    renderStationListSection(container, state.existStations, true);
+  } else {
+    renderStationListSection(container, state.stations, false);
+  }
+}
+
+function renderStationListSection(container, stations, isExist) {
+  if (!stations.length) return;
+
+  const sorted = [...stations].sort((a, b) =>
+    (b.incidents_covered || 0) - (a.incidents_covered || 0)
+  );
+  const maxCov = sorted[0]?.incidents_covered || 1;
+
+  sorted.forEach(st => {
+    const sid   = st.station_id;
+    const color = isExist ? '#b07aff' : SECTOR_COLORS[sid % SECTOR_COLORS.length];
+    const pct   = (st.incidents_covered || 0) / maxCov;
+
+    const el = document.createElement('div');
+    el.className = 'station-item';
+    el.id = `slist-${isExist ? 'exist-' : ''}${sid}`;
+    el.innerHTML = `
+      <div class="station-dot" style="background:${isExist ? 'transparent' : color};border:${isExist ? '2px solid '+color : 'none'}"></div>
+      <div class="station-info">
+        <div class="station-name">Station ${sid}</div>
+        <div class="station-meta">${st.incidents_covered ?? '—'} incidents · ${st.coverage_pct ?? '—'}% · ${st.beats_assigned ?? '—'} beats</div>
+      </div>
+      <div class="station-bar"><div class="station-bar-fill" style="width:${pct*100}%;background:${color}"></div></div>
+      ${state.mode === 'compare'
+        ? `<div class="station-badge ${isExist ? 'exist-badge' : 'opt-badge'}">${isExist ? 'exist' : 'opt'}</div>`
+        : ''}
+    `;
+    el.addEventListener('click', () => selectStation(sid, isExist));
+    container.appendChild(el);
+  });
+}
+
+function fitMapToBounds() {
+  const allStations = [...state.stations, ...state.existStations];
+  if (!allStations.length) return;
+  const lats = allStations.map(s => s.lat);
+  const lons = allStations.map(s => s.lon);
+  map.fitBounds([
+    [Math.min(...lats) - 0.01, Math.min(...lons) - 0.01],
+    [Math.max(...lats) + 0.01, Math.max(...lons) + 0.01],
+  ]);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// STATION SELECTION
+// ─────────────────────────────────────────────────────────────────────────────
+function selectStation(sid, isExist) {
+  state.selectedStation    = sid;
+  state.selectedIsExisting = isExist;
+
+  const stList = isExist ? state.existStations : state.stations;
+  const st     = stList.find(s => s.station_id === sid);
+  if (!st) return;
+
+  document.querySelectorAll('.station-item').forEach(el => el.classList.remove('selected'));
+  const listEl = document.getElementById(`slist-${isExist ? 'exist-' : ''}${sid}`);
+  if (listEl) { listEl.classList.add('selected'); listEl.scrollIntoView({ block:'nearest' }); }
+
+  map.flyTo([st.lat, st.lon], 13, { duration:0.8 });
+  showDetailPanel(st, isExist);
+  highlightStationCoverage(sid);
+}
+
+function highlightStationCoverage(sid) {
+  incidentLayer.clearLayers();
+  if (!state.showIncidents) return;
+
+  state.incidents.forEach(inc => {
+    let covering = [];
+    try { covering = JSON.parse(inc.covering_stations || '[]'); } catch {}
+
+    const isByThis = covering.includes(sid);
+    const isCovered = inc.covered === 1;
+
+    let color, opacity, radius;
+    if (isByThis)       { color='#e8c96a'; opacity=0.9; radius=5; }
+    else if (isCovered) { color='#3ddc84'; opacity=0.25; radius=3; }
+    else                { color='#ff5959'; opacity=0.2;  radius=2; }
+
+    if (state.showUncoveredOnly && isCovered) return;
+
+    const m = L.circleMarker([inc.lat, inc.lon], {
+      radius, fillColor:color, color:'transparent', fillOpacity:opacity,
+    });
+    const tip = [
+      `<b>Incident #${inc.incident_id}</b>`,
+      `Weight: ${(+inc.crime_weight).toFixed(2)}`,
+      `Status: ${isByThis ? '★ Covered by this station' : isCovered ? '✓ Covered (other)' : '✗ Uncovered'}`,
+      inc.crm_cd_desc ? `Type: ${inc.crm_cd_desc}` : '',
+    ].filter(Boolean).join('<br>');
+    m.bindTooltip(tip, { className:'inc-tip', sticky:true });
+    incidentLayer.addLayer(m);
+  });
+}
+
+function clearSelection() {
+  state.selectedStation = null;
+  document.querySelectorAll('.station-item').forEach(el => el.classList.remove('selected'));
+  document.getElementById('detail-panel').style.display = 'none';
+  renderIncidents();
+}
+
+function showDetailPanel(st, isExist) {
+  const panel = document.getElementById('detail-panel');
+  panel.style.display = 'block';
+
+  const label = isExist ? `[Existing] Station ${st.station_id}` : `Station ${st.station_id}`;
+  document.getElementById('dp-title').textContent = label;
+  document.getElementById('dp-title').style.color = isExist ? 'var(--existing)' : 'var(--accent)';
+
+  let backupCount = 0;
+  if (!isExist) {
+    state.incidents.forEach(inc => {
+      let covering = [];
+      try { covering = JSON.parse(inc.covering_stations || '[]'); } catch {}
+      if (covering.includes(st.station_id) && covering.length > 1) backupCount++;
+    });
+  }
+
+  const rows = [
+    ['Incidents Covered', st.incidents_covered ?? '—', 'hi'],
+    ['Coverage %',        (st.coverage_pct ?? '—') + (st.coverage_pct != null ? '%' : ''), 'hi'],
+    ['Weighted Coverage', st.weighted_coverage != null ? (+st.weighted_coverage).toFixed(1) : '—', ''],
+    ['Weighted Cov %',    st.weighted_coverage_pct != null ? st.weighted_coverage_pct + '%' : '—', 'ok'],
+    !isExist ? ['Backup Incidents', backupCount, 'warn'] : null,
+    ['Beats Assigned',    st.beats_assigned ?? '—', ''],
+    ['Coordinates',       `${(+st.lat).toFixed(4)}, ${(+st.lon).toFixed(4)}`, ''],
+  ].filter(Boolean);
+
+  document.getElementById('detail-body').innerHTML = rows.map(([k, v, cls]) =>
+    `<div class="dp-row">
+      <span class="dp-key">${k}</span>
+      <span class="dp-val ${cls}">${v}</span>
+    </div>`
+  ).join('');
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// TOGGLE CONTROLS
+// ─────────────────────────────────────────────────────────────────────────────
+function bindControls() {
+  // Mode tabs
+  document.querySelectorAll('.mode-tab').forEach(tab => {
+    tab.addEventListener('click', function() {
+      document.querySelectorAll('.mode-tab').forEach(t => t.classList.remove('active'));
+      this.classList.add('active');
+      state.mode = this.dataset.mode;
+
+      if (state.stations.length) {
+        updatePanels();
+        renderStations();
+        renderExistStations();
+        renderIncidents();
+        renderStationList();
+        clearSelection();
+
+        // Show/hide exist stations button based on mode
+        const existBtn = document.getElementById('btn-exist-stations');
+        existBtn.style.display = (state.mode === 'compare' || state.mode === 'existing') ? '' : 'none';
+      }
+    });
+  });
+
+  const toggles = [
+    ['btn-beats',         () => { state.showBeats      = !state.showBeats;      renderBeats(); }],
+    ['btn-laarea',        () => { state.showLaArea      = !state.showLaArea;     renderLaArea(); }],
+    ['btn-stations',      () => { state.showStations    = !state.showStations;   renderStations(); }],
+    ['btn-incidents',     () => { state.showIncidents   = !state.showIncidents;  renderIncidents(); }],
+    ['btn-radius',        () => { state.showRadius      = !state.showRadius;     renderStations(); renderExistStations(); }],
+    ['btn-uncovered',     () => { state.showUncoveredOnly = !state.showUncoveredOnly; renderIncidents(); }],
+    ['btn-exist-stations',() => { state.showExistStations = !state.showExistStations; renderExistStations(); }],
+  ];
+  toggles.forEach(([id, fn]) => {
+    document.getElementById(id).addEventListener('click', function() {
+      this.classList.toggle('active');
+      fn();
+    });
+  });
+
+  // Default active states
+  ['btn-beats','btn-stations','btn-incidents'].forEach(id =>
+    document.getElementById(id).classList.add('active')
+  );
+
+  // Hide existing station toggle until relevant
+  document.getElementById('btn-exist-stations').style.display = 'none';
+
+  document.getElementById('detail-close').addEventListener('click', clearSelection);
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// BOOT
+// ─────────────────────────────────────────────────────────────────────────────
+initMap();
+bindFileInputs();
+bindControls();
+</script>
+</body>
+</html>

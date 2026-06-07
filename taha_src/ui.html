@@ -687,15 +687,30 @@ async function loadAllFiles() {
 
     // Summary (optional)
     if (files.summary) {
-      const sumText = await readFile(files.summary);
-      const rows = Papa.parse(sumText, { header: true, dynamicTyping: true }).data;
-      state.summary = {};
-      rows.forEach(r => { if (r.metric) state.summary[r.metric] = r.value; });
-      // Also handle single-row format
-      if (rows.length === 1 && rows[0].total_incidents != null) {
-        state.summary = rows[0];
-        state.summaryIsRow = true;
-      }
+        const sumText = await readFile(files.summary);
+        console.log("=== [DEBUG SUMMARY] 1. Ham Metin (Dosya İçeriği) ===");
+        console.log(sumText);
+
+        const rows = Papa.parse(sumText, { header: true, dynamicTyping: true }).data;
+        console.log("=== [DEBUG SUMMARY] 2. Papa.parse Sonrası Satırlar (Rows) ===");
+        console.log(JSON.stringify(rows, null, 2));
+
+        state.summary = {};
+        rows.forEach(r => { 
+            if (r.metric) state.summary[r.metric] = r.value; 
+        });
+        console.log("=== [DEBUG SUMMARY] 3. Çoklu Satır (Metric/Value) Döngüsü Sonrası Durum ===");
+        console.log(JSON.stringify(state.summary, null, 2));
+
+        // Also handle single-row format
+        if (rows.length === 1 && rows[0].total_incidents != null) {
+            console.log("=== [DEBUG SUMMARY] 4. Tek Satır (Single-row) Formatı Algılandı! ===");
+            state.summary = rows[0];
+            state.summaryIsRow = true;
+        }
+
+        console.log("=== [DEBUG SUMMARY] 5. Final state.summary Sonucu ===");
+        console.log(JSON.stringify(state.summary, null, 2));
     }
 
     // Beats GeoJSON (optional)
@@ -753,8 +768,9 @@ function updateSummaryKPIs() {
   document.getElementById('kpi-stations').textContent = state.stations.length;
   document.getElementById('kpi-incidents').textContent = totalInc.toLocaleString();
 
-  let radius = '—';
+  let radius = '1.5';
   if (s) {
+    //console.log(s.toLocaleString());
     const val = s.service_radius_mi ?? s['Service distance (mi)'];
     if (val != null) radius = val + ' mi';
   }
@@ -876,7 +892,7 @@ function renderStations() {
     if (state.showRadius && state.summary) {
       const rm = state.summary.service_radius_m
                ?? state.summary['Service distance (m)']
-               ?? 3218;
+               ?? 2414;
       const circle = L.circle([st.lat, st.lon], {
         radius: +rm,
         color: color,
