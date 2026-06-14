@@ -1,0 +1,284 @@
+\documentclass[12pt]{article}
+\usepackage[utf8]{inputenc}
+\usepackage{amsmath, amssymb}
+\usepackage{algorithm}
+\usepackage{algpseudocode}
+\usepackage{geometry}
+\usepackage{booktabs}
+\usepackage{tabularx}
+\usepackage{xcolor}
+\usepackage{hyperref}
+\geometry{a4paper, margin=1in}
+
+\hypersetup{colorlinks=true, linkcolor=blue, urlcolor=blue}
+
+\title{\textbf{Police Patrol Area Covering Models}\\[0.4em]
+\large Algorithm Comparison: Curtin et al.\ (2010), Existing Coverage Evaluator,\\
+Greedy Optimizer, and Integer Programming Optimizer}
+\author{Graduation Project --- Determining Police Patrol Areas}
+\date{\today}
+
+\begin{document}
+\maketitle
+\tableofcontents
+\newpage
+
+% =============================================================================
+\section{Common Parameters}
+% =============================================================================
+
+The following parameters, objectives, and constraints are shared identically
+across all four approaches.
+
+\subsection*{Decision Variables}
+
+\begin{tabular}{@{} l p{11cm} @{}}
+$I,\,i$            & Set and index of incident locations (calls for service) \\
+$J,\,j$            & Set and index of candidate command-centre locations \\
+$a_i$              & Weight of incident $i$ \\
+$P$                & Number of patrol command centres to locate \\
+$S$                & Acceptable service distance threshold \\
+$d_{ij}$           & Road-network shortest-path distance, incident $i$ to candidate $j$ \\
+$N_i$              & $\{j \in J \mid d_{ij} \le S\}$ — candidates that can cover incident $i$ \\
+$x_j \in \{0,1\}$  & 1 if a patrol is located at candidate $j$; 0 otherwise \\
+$y_i \in \{0,1\}$  & 1 if incident $i$ is covered by at least one located patrol; 0 otherwise \\
+\end{tabular}
+
+\subsection*{Shared Objective and Constraints}
+
+\begin{equation}
+    \text{Maximise} \quad O = \sum_{i \in I} a_i\, y_i
+    \label{eq:obj}
+\end{equation}
+
+\noindent subject to:
+\begin{align}
+    \sum_{j \in N_i} x_j &\ge y_i  && \forall\, i \in I \label{eq:cov}\\
+    \sum_{j \in J}   x_j &=  P     && \label{eq:card}\\
+    x_j &\in \{0,1\}               && \forall\, j \in J \label{eq:xbin}\\
+    y_i &\in \{0,1\}               && \forall\, i \in I \label{eq:ybin}
+\end{align}
+
+\noindent The backup covering objective is additionally computed post-hoc by
+all approaches (or formally in Curtin et al.):
+
+\begin{equation}
+    B = \sum_{i \in I} a_i \cdot c_i
+    \quad \text{where } c_i = |\{j \in H : d_{ij} \le S\}|
+    \label{eq:backup}
+\end{equation}
+
+\noindent All four approaches use road-network shortest-path distances for
+$d_{ij}$, computed via single-source Dijkstra with cutoff $S$ on an OSM
+or GIS drivable graph, and evaluate both $O$ and $B$.
+
+% =============================================================================
+\section{Differing Parameters}
+% =============================================================================
+
+\renewcommand{\arraystretch}{1.45}
+\begin{tabularx}{\textwidth}{@{} l X X X X @{}}
+\toprule
+\textbf{Parameter}
+  & \textbf{Curtin et al.\ (2010)}
+  & \textbf{Evaluator}
+  & \textbf{Greedy}
+  & \textbf{IP Optimizer} \\
+\midrule
+
+$|I|$
+  & Up to 87,603 (Dallas PD, 2000)
+  & 997,488 (LAPD)
+  & 997,488 (LAPD)
+  & 997,488 (LAPD) \\
+
+$|J|$
+  & Beat centroids within one division (pre-existing polygons)
+  & 21 real stations (fixed; no generation step)
+  & 300 K-Means centroids (data-derived)
+  & 300 K-Means centroids (data-derived) \\
+
+$P$
+  & Per division (e.g.\ 5 for North Central)
+  & 21 — all facilities used; no selection
+  & 21
+  & 21 \\
+
+$S$
+  & 2 mi (1 mi for Central Division)
+  & 2.5 mi $= 4{,}023$ m
+  & 2.5 mi $= 4{,}023$ m
+  & 2.5 mi $= 4{,}023$ m \\
+
+$a_i$
+  & Signal Code 1–5 (non-linear priority)
+  & \texttt{crime\_weight}
+  & \texttt{crime\_weight}
+  & \texttt{crime\_weight} aggregated to beat level: $a_j = \sum_{i \in \mathcal{S}_j} a_i$ \\
+
+Road network
+  & Proprietary NCTCOG GIS (Dallas)
+  & OSMnx EPSG:4326
+  & OSMnx UTM + EPSG:4326
+  & OSMnx UTM + EPSG:4326 \\
+
+Facility selection
+  & CPLEX 8.1 IP — proven optimal
+  & None (all $J$ used, $x_j \equiv 1$)
+  & Greedy $\approx (1-1/e)$ guarantee
+  & PuLP + CBC IP — proven optimal \\
+
+IP demand level
+  & Incident-level ($|I|$ variables)
+  & N/A
+  & N/A
+  & Beat-level ($|J|=300$ variables) \\
+
+Scope
+  & Per division independently (6 runs)
+  & City-wide, single pass
+  & City-wide, single pass
+  & City-wide, single pass \\
+
+Backup coverage
+  & Formal multi-objective IP; Pareto frontier of $O$ vs.\ $B$
+  & Post-hoc via eq.\ \eqref{eq:backup}
+  & Post-hoc via eq.\ \eqref{eq:backup}
+  & Post-hoc via eq.\ \eqref{eq:backup} \\
+
+\bottomrule
+\end{tabularx}
+
+% =============================================================================
+\section{Algorithm 1 — Curtin et al.\ (2010)}
+% =============================================================================
+
+\begin{algorithm}[H]
+\caption{Classical PPAC --- Curtin, Hayslett-McCall \& Qiu (2010)}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Incidents $I$ with Signal Code weights $a_i$;
+       existing beat-centroid polygons as $J$; $P$; $S$
+\State Compute all-to-all OD matrix on proprietary NCTCOG road network (GIS)
+\For{each $i \in I$}
+    \State $N_i \leftarrow \{j \in J \mid d_{ij} \le S\}$
+\EndFor
+\State Export $\{|I|,\, |J|,\, a_i,\, N_i\}$ to CPLEX 8.1
+\State \textbf{Solve} (branch-and-bound + LP relaxation, proven optimal):
+    \Statex \quad $\max \sum_{i} a_i y_i$ \; s.t.\ \eqref{eq:cov}--\eqref{eq:ybin}
+\State Assign beats to sectors from $\mathbf{x}^*$; report $O$, total distance
+\State \textit{Backup variant:} relax $y_i \in \{0,\dots,P\}$;
+       add $\sum_i a_i w_i \ge \hat{O}$;
+       solve for decreasing $\hat{O}$ $\to$ Pareto frontier of $(O,B)$
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================================
+\section{Algorithm 2 — Existing Infrastructure Evaluator}
+% =============================================================================
+
+\begin{algorithm}[H]
+\caption{Existing LAPD Station Coverage Evaluator}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Crime CSV ($I$, $a_i$); 21 fixed station locations as $J$;
+       city boundary; $S = 2.5$ mi
+\State Load, reproject, and spatial-join incidents to city boundary
+\State Convert stations from EPSG:2229 $\to$ EPSG:3857; snap all to OSM nodes
+\State \textit{No facility selection:} $x_j = 1$ for all $j \in J$
+\For{each station $j \in J$}
+    \State $\ell_j \leftarrow \text{Dijkstra}(G,\; v^*_j,\; \text{cutoff}=S)$
+    \For{each incident $i$ with $v^*_i \in \ell_j$}
+        \State $c_i \mathrel{+}= 1$
+    \EndFor
+\EndFor
+\State $O \leftarrow \sum_i a_i \cdot \mathbf{1}[c_i \ge 1]$;\quad
+       $B \leftarrow \sum_i a_i \cdot c_i$
+\State Report $O$, $B$, coverage percentages; render map
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================================
+\section{Algorithm 3 — Greedy PPAC Optimizer}
+% =============================================================================
+
+\begin{algorithm}[H]
+\caption{Greedy PPAC Optimizer}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Crime CSV ($I$, $a_i$); city boundary; $|J|=300$;
+       $P=21$; $S=2.5$ mi
+\State \textit{Stage 1 — Candidate generation:}
+    Weighted Mini-Batch K-Means on $I$ $\to$ 300 beat centroids $= J$
+\State Load OSM graph; project to UTM ($G_{\text{metric}}$) and EPSG:4326 ($G_{\text{4326}}$)
+\State Snap all $j \in J$ and $i \in I$ to OSM nodes via $G_{\text{4326}}$ (vectorised)
+\For{each candidate $j \in J$}
+    \State $C_j \leftarrow \{i \in I \mid v^*_i \in
+           \text{Dijkstra}(G_{\text{metric}},\, v^*_j,\, \text{cutoff}=S)\}$
+\EndFor
+\State \textit{Stage 2 — Greedy selection:}
+    $H \leftarrow \emptyset$; \; $\text{covered} \leftarrow \emptyset$
+\For{$k = 1$ \textbf{to} $P$}
+    \State $j^* \leftarrow \arg\max_{j \notin H}
+           \displaystyle\sum_{i \,\in\, C_j \setminus \text{covered}} a_i$
+    \State $H \leftarrow H \cup \{j^*\}$;\quad
+           $\text{covered} \leftarrow \text{covered} \cup C_{j^*}$
+\EndFor
+\State $O \leftarrow \sum_i a_i \cdot \mathbf{1}[i \in \text{covered}]$;\quad
+       $B \leftarrow \sum_i a_i \cdot |\{j \in H : i \in C_j\}|$
+\State Assign beats to nearest $j \in H$; render Voronoi sector map
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================================
+\section{Algorithm 4 — Integer Programming PPAC Optimizer}
+% =============================================================================
+
+\begin{algorithm}[H]
+\caption{IP PPAC Optimizer (PuLP + CBC)}
+\begin{algorithmic}[1]
+\State \textbf{Input:} Crime CSV ($I$, $a_i$); city boundary;
+       $|J|=300$; $P=21$; $S=2.5$ mi
+\State \textit{Stage 1 — Candidate generation:}
+    Weighted Mini-Batch K-Means on $I$ $\to$ $J$;
+    aggregate $a_j = \sum_{i \in \mathcal{S}_j} a_i$
+\State Load OSM graph; project to $G_{\text{metric}}$ (UTM) and $G_{\text{4326}}$
+\State Snap $J$ and $I$ to OSM nodes via $G_{\text{4326}}$ (vectorised)
+\For{each candidate $j \in J$}
+    \State $C_j \leftarrow \{j' \in J \mid v^*_{j'} \in
+           \text{Dijkstra}(G_{\text{metric}},\, v^*_j,\, \text{cutoff}=S)\}$
+           \Comment{beat-level coverage sets}
+\EndFor
+\State \textit{Stage 2 — PPAC IP (PuLP + CBC, proven optimal):}
+\State Declare $x_j, y_j \in \{0,1\}$ for all $j \in J$
+\State \textbf{Solve:} $\max \sum_{j} a_j y_j$ \; s.t.
+    $\sum_{j' \in C_j} x_{j'} \ge y_j \;\forall j$;\;
+    $\sum_j x_j = P$;\;
+    $x_j, y_j \in \{0,1\}$
+\State $H \leftarrow \{j \in J \mid x^*_j = 1\}$
+\State \textit{Stage 3 — Incident-level coverage evaluation:}
+\For{each $j \in H$}
+    \State $C^{\text{inc}}_j \leftarrow \{i \in I \mid v^*_i \in
+           \text{Dijkstra}(G_{\text{metric}},\, v^*_j,\, \text{cutoff}=S)\}$
+    \For{each $i \in C^{\text{inc}}_j$}
+        \State $c_i \mathrel{+}= 1$
+    \EndFor
+\EndFor
+\State $O \leftarrow \sum_i a_i \cdot \mathbf{1}[c_i \ge 1]$;\quad
+       $B \leftarrow \sum_i a_i \cdot c_i$
+\State Assign beats to nearest $j \in H$; render Voronoi sector map
+\end{algorithmic}
+\end{algorithm}
+
+% =============================================================================
+\begin{thebibliography}{9}
+\bibitem{curtin2010}
+Curtin, K.M., Hayslett-McCall, K., \& Qiu, F. (2010).
+\textit{Determining Optimal Police Patrol Areas with Maximal Covering and
+Backup Covering Location Models.}
+Networks and Spatial Economics, 10, 125--145.
+
+\bibitem{church1974}
+Church, R.L., \& ReVelle, C.S. (1974).
+\textit{The Maximal Covering Location Problem.}
+Papers of the Regional Science Association, 32, 101--118.
+\end{thebibliography}
+
+\end{document}

@@ -1,0 +1,15 @@
+metric,value
+Total incidents,203535
+Service distance (mi),1.5
+Service distance (m),2414.0099999999998
+Num candidates (|J|),250
+Num sectors (P),10
+IP solver status,Optimal
+MIP gap,0.0
+Exact IP objective (Z*),597918.0
+Incidents covered (count),188345
+Coverage pct (count),92.54
+Maximal Covering Objective (O),597918.0
+Coverage pct (weighted),92.57
+Maximal Backup Objective (B),680496.0
+Total runtime (s),921.8

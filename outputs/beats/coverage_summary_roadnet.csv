@@ -1,0 +1,10 @@
+metric,value
+Total incidents,997488.0
+Service distance (mi),2.5
+Service distance (m),4023.35
+Incidents covered (count),786534.0
+Coverage pct (count),78.85
+Maximal Covering Objective,2489666.0
+Coverage pct (weighted),79.09
+Maximal Backup Objective,3293791.0
+Total runtime (s),84.9
