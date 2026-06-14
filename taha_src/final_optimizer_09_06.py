@@ -28,6 +28,9 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Change this variable to dynamically name your target directory
+
+
 CRIME_DATA_PATH    = '../resources/cleaned_data.csv'
 BOUNDARY_FILE_PATH = '../resources/LA_AREA.geojson'
 
@@ -45,15 +48,23 @@ SERVICE_MI  = 2.0        # S    service radius in miles police station sayisi ar
 CLUSTER_RADIUS = 50.0
 SERVICE_M   = SERVICE_MI * 1_609.34   # S in metres
 
-OUTPUT_IMG  = '../outputs/optimized/ppac_exact_optimal_28P.png'
-OUTPUT_CSV  = '../outputs/optimized/ppac_exact_summary_28P.csv'
+# Enforce a strict minimum absolute score on the primary coverage objective (at least once covered)
+# Look at your "Maximal Covering Obj (O)" from previous runs to choose a baseline (e.g., 800000.0)
+MIN_COVERAGE_SCORE = 2470000.0
+
+OUTPUT_FOLDER_NAME = "2.47M_500BEATS"
+
+BASE_OUTPUT_DIR = f'../outputs/optimized/backup/{OUTPUT_FOLDER_NAME}'
+
+OUTPUT_IMG  = os.path.join(BASE_OUTPUT_DIR, 'ppac_exact_optimal.png')
+OUTPUT_CSV  = os.path.join(BASE_OUTPUT_DIR, 'ppac_exact_summary.csv')
 OSM_CACHE   = '../resources/la_drive_network.graphml'
 
 # ── NEW: UI Export paths ──────────────────────────────────────────────────────
-OUTPUT_STATIONS    = '../outputs/optimized/stations_28P.csv'
-OUTPUT_INCIDENTS   = '../outputs/optimized/incidents_export_28P.csv'
-OUTPUT_OPT_SUMMARY = '../outputs/optimized/optimization_summary_28P.csv'
-OUTPUT_BEATS_GEO   = '../outputs/optimized/beat_polygons_28P.geojson'
+OUTPUT_STATIONS    = os.path.join(BASE_OUTPUT_DIR, 'stations.csv')
+OUTPUT_INCIDENTS   = os.path.join(BASE_OUTPUT_DIR, 'incidents_export.csv')
+OUTPUT_OPT_SUMMARY = os.path.join(BASE_OUTPUT_DIR, 'optimization_summary.csv')
+OUTPUT_BEATS_GEO   = os.path.join(BASE_OUTPUT_DIR, 'beat_polygons.geojson')
 
 IP_TIME_LIMIT = 720000     # iki yüz saat yetismesi icin
 
@@ -178,7 +189,8 @@ def solve_ppac_ip(coverage_sets: list,
                   n_inc: int,
                   P: int,
                   time_limit: int = 1800,
-                  mip_gap: float = 0.0) -> tuple:
+                  mip_gap: float = 0.0,
+                  min_coverage_score: float = 0.0) -> tuple:
     n_cand = len(coverage_sets)
 
     print("    Building incident-to-candidate reverse mapping (N_i)...")
@@ -200,34 +212,61 @@ def solve_ppac_ip(coverage_sets: list,
 
     print("    Initializing OR-Tools model variables...")
     x = [solver.BoolVar(f"x_{j}") for j in range(n_cand)]
-    y = [solver.BoolVar(f"y_{i}") for i in range(n_inc)]
+    
+    # y_i tracking exactly how many stations cover incident i
+    y = [solver.IntVar(0.0, float(P), f"y_{i}") for i in range(n_inc)]
+    
+    # z_i tracking if incident i is covered AT LEAST once (binary indicator for constraint)
+    z = [solver.BoolVar(f"z_{i}") for i in range(n_inc)]
 
-    print("    Adding objective function...")
+    print("    Adding Objective Function: Maximize (Weights x Number of Stations Covering It)...")
     objective = solver.Objective()
     for i in range(n_inc):
         objective.SetCoefficient(y[i], float(weights[i]))
     objective.SetMaximization()
 
-    print(f"    Building {n_inc:,} coverage constraints...")
+    print(f"    Building {n_inc:,} absolute multi-coverage tracking constraints...")
     print_interval = max(1, n_inc // 20)
 
     for i in range(n_inc):
         if N[i]:
-            constraint = solver.Constraint(0, solver.infinity(), f"cov_{i}")
-            constraint.SetCoefficient(y[i], -1.0)
+            # 1. Exact tracking: y_i = sum(x_j)  ==>  y_i - sum(x_j) = 0
+            tracking_constraint = solver.Constraint(0.0, 0.0, f"track_cov_{i}")
+            tracking_constraint.SetCoefficient(y[i], 1.0)
             for j in N[i]:
-                constraint.SetCoefficient(x[j], 1.0)
+                tracking_constraint.SetCoefficient(x[j], -1.0)
+                
+            # 2. Link z_i to y_i: z_i <= y_i  ==>  z_i - y_i <= 0
+            link_lower = solver.Constraint(-solver.infinity(), 0.0, f"link_low_{i}")
+            link_lower.SetCoefficient(z[i], 1.0)
+            link_lower.SetCoefficient(y[i], -1.0)
+            
+            # 3. Link z_i to y_i: y_i <= P * z_i  ==>  y_i - P * z_i <= 0
+            link_upper = solver.Constraint(-solver.infinity(), 0.0, f"link_up_{i}")
+            link_upper.SetCoefficient(y[i], 1.0)
+            link_upper.SetCoefficient(z[i], -float(P))
         else:
-            constraint = solver.Constraint(0, 0, f"uncoverable_{i}")
-            constraint.SetCoefficient(y[i], 1.0)
+            # Nodes that can never be reached by any candidate station are locked to 0
+            c_y = solver.Constraint(0, 0, f"uncoverable_y_{i}")
+            c_y.SetCoefficient(y[i], 1.0)
+            c_z = solver.Constraint(0, 0, f"uncoverable_z_{i}")
+            c_z.SetCoefficient(z[i], 1.0)
 
         if (i + 1) % print_interval == 0 or (i + 1) == n_inc:
             pct = ((i + 1) / n_inc) * 100
             print(f"       Constraint build progress: {pct:.0f}% complete ({i + 1}/{n_inc} variables)")
 
+    # Global resource limit: budget of exactly P stations total
     cardinality_constraint = solver.Constraint(float(P), float(P), "cardinality")
     for j in range(n_cand):
         cardinality_constraint.SetCoefficient(x[j], 1.0)
+
+    # Enforce minimum primary absolute coverage score threshold using our binary indicator variable z
+    if min_coverage_score > 0.0:
+        print(f"    Adding lower limit coverage constraint: Requires at least a primary coverage score of {min_coverage_score:,.2f}")
+        min_cov_constraint = solver.Constraint(float(min_coverage_score), solver.infinity(), "min_primary_coverage_bound")
+        for i in range(n_inc):
+            min_cov_constraint.SetCoefficient(z[i], float(weights[i]))
 
     print("    Passing exact formulation to SCIP solver...")
     solver.EnableOutput()
@@ -305,7 +344,7 @@ def export_stations_csv(sector_hqs_3857: np.ndarray,
             if coverers > 1:
                 backup_count += 1
 
-        beats_in_sector = int((beat_to_sector == rank).sum())
+            beats_in_sector = int((beat_to_sector == rank).sum())
 
         rows.append({
             'station_id': rank,
@@ -522,26 +561,47 @@ def generate_patrol_map():
     print(f"   {NUM_BEATS} candidate HQ nodes snapped.")
 
     inc_gdf  = gdf.to_crs(4326)
-    inc_nodes = snap_to_nodes(G_4326, inc_gdf.geometry.x.values, inc_gdf.geometry.y.values)
-    print(f"   {n_inc:,} exact incident nodes snapped.  ({time.time()-t3:.1f}s)")
+    raw_snap_nodes = snap_to_nodes(G_4326, inc_gdf.geometry.x.values, inc_gdf.geometry.y.values)
+
+    print("   Aggregating super-incidents sharing identical road nodes...")
+    node_to_cluster_indices = {}
+    for idx, node_id in enumerate(raw_snap_nodes):
+        node_to_cluster_indices.setdefault(int(node_id), []).append(idx)
+
+    unique_inc_nodes = np.array(list(node_to_cluster_indices.keys()))
+    aggregated_weights = np.array([
+        sum(weights[idx] for idx in node_to_cluster_indices[node]) 
+        for node in unique_inc_nodes
+    ])
+
+    agg_to_clusters_map = {i: node_to_cluster_indices[node] for i, node in enumerate(unique_inc_nodes)}
+
+    cluster_to_agg = np.zeros(len(gdf), dtype=int)
+    for agg_idx, cluster_indices in agg_to_clusters_map.items():
+        for c_idx in cluster_indices:
+            cluster_to_agg[c_idx] = agg_idx
+
+    n_inc_aggregated = len(unique_inc_nodes)
+    print(f"   Reduced {n_inc:,} cluster points down to {n_inc_aggregated:,} unique network nodes. ({time.time()-t3:.1f}s)")
 
     # ── 3.6  Coverage sets ────────────────────────────────────────────────────
     print(f"[5/6] Building EXACT incident road-network coverage sets (S = {SERVICE_MI} mi)...")
     t4 = time.time()
-    inc_coverage_sets = build_coverage_sets(G_metric, beat_nodes, inc_nodes, SERVICE_M)
+    inc_coverage_sets = build_coverage_sets(G_metric, beat_nodes, unique_inc_nodes, SERVICE_M)
     print(f"   Coverage sets built. ({time.time()-t4:.1f}s)")
 
     # ── 3.7  PPAC Integer Programme ───────────────────────────────────────────
-    print(f"[5b/6] Solving Exact PPAC IP (P={NUM_SECTORS}, |J|={NUM_BEATS}, |I|={n_inc}) ...")
+    print(f"[5b/6] Solving Exact PPAC IP (P={NUM_SECTORS}, |J|={NUM_BEATS}, |I|={n_inc_aggregated}) ...")
     t5 = time.time()
 
     x_sol, y_sol_inc, Z_ip, gap, status = solve_ppac_ip(
         coverage_sets=inc_coverage_sets,
-        weights=weights,
-        n_inc=n_inc,
+        weights=aggregated_weights,
+        n_inc=n_inc_aggregated,
         P=NUM_SECTORS,
         time_limit=IP_TIME_LIMIT,
         mip_gap=IP_MIP_GAP,
+        min_coverage_score=MIN_COVERAGE_SCORE,
     )
 
     selected_idx = np.where(x_sol)[0]
@@ -553,22 +613,22 @@ def generate_patrol_map():
     t6 = time.time()
 
     coverage_counts, covered_count, O, B = evaluate_coverage(
-        inc_coverage_sets, x_sol, weights, n_inc
+        inc_coverage_sets, x_sol, aggregated_weights, n_inc_aggregated
     )
 
-    #  Map clustered coverage back to raw incidents to secure unaggregated prints
-    cluster_covered_mask = coverage_counts >= 1
+    cluster_coverage_counts = coverage_counts[cluster_to_agg]
+    cluster_covered_mask = cluster_coverage_counts >= 1
     raw_covered_mask = cluster_covered_mask[inc_to_cluster]
     true_raw_covered_count = int(raw_covered_mask.sum())
 
-    total_w    = weights.sum()
+    total_w    = raw_weights.sum()
     pct_count  = 100 * true_raw_covered_count / n_raw_incidents
     pct_weight = 100 * O / total_w
 
     print(f"\n   ── EXACT PPAC IP Coverage (S = {SERVICE_MI} mi = {SERVICE_M:.0f} m) ──")
-    print(f"   IP Status                      : {status}")
+    print(f"   IP Status                       : {status}")
     if gap:
-        print(f"   MIP Gap                        : {gap:.4f}")
+        print(f"   MIP Gap                         : {gap:.4f}")
     print(f"   Exact IP Objective (Z*)        : {Z_ip:,.2f}")
     print(f"   Incident coverage (count)      : {true_raw_covered_count:,} / {n_raw_incidents:,}  ({pct_count:.1f} %)")
     print(f"   Maximal Covering Obj (O)      : {O:,.1f} / {total_w:,.1f}  ({pct_weight:.1f} %)")
@@ -612,7 +672,7 @@ def generate_patrol_map():
         sector_hqs_4326_lat=hq_lats,
         coverage_sets=inc_coverage_sets,
         x_sol=x_sol,
-        weights=weights,
+        weights=aggregated_weights,
         gdf_incidents=gdf,
         beat_to_sector=beat_to_sector,
         beat_centers=beat_centers,
@@ -624,7 +684,7 @@ def generate_patrol_map():
         coverage_sets=inc_coverage_sets,
         x_sol=x_sol,
         weights=raw_weights,             # <-- was: weights (these are cluster weights)
-        coverage_counts=coverage_counts,
+        coverage_counts=cluster_coverage_counts,
         inc_to_cluster=inc_to_cluster,   # <-- ADD
         output_path=OUTPUT_INCIDENTS,
     )
@@ -746,4 +806,3 @@ def generate_patrol_map():
 
 if __name__ == '__main__':
     generate_patrol_map()
-

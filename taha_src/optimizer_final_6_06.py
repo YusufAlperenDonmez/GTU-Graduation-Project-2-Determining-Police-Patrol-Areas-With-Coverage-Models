@@ -28,6 +28,9 @@ warnings.filterwarnings("ignore")
 # 0.  CONFIGURATION
 # ─────────────────────────────────────────────────────────────────────────────
 
+# Change this variable to dynamically name your target directory
+
+
 CRIME_DATA_PATH    = '../resources/cleaned_data.csv'
 BOUNDARY_FILE_PATH = '../resources/LA_AREA.geojson'
 
@@ -37,7 +40,7 @@ USER_POLYGON_COORDS = [[-118.753967, 34.354774], [-118.096161, 34.354774], [-118
 # USER_POLYGON_COORDS = [[-118.322754, 34.195901], [-118.482056, 34.025348], [-118.151093, 33.950195], [-118.035736, 34.179998], [-118.322754, 34.195901]]
 
 NUM_BEATS   = 500      # |J|  candidate facility locations
-NUM_SECTORS = 21         # P    command centres to locate
+NUM_SECTORS = 28         # P    command centres to locate
 SERVICE_MI  = 2.0        # S    service radius in miles police station sayisi arttirmak yerine mile dusuruldu 
                             #    bunun sebebi hem ayni sayida polis istasyonu ile kiyas yapabilmek ve  
                             #    LA AREA icerisindeki trafik ile bakınca 2 mile gercekci bir uzaklik olmayabilir.
@@ -47,17 +50,21 @@ SERVICE_M   = SERVICE_MI * 1_609.34   # S in metres
 
 # Enforce a strict minimum absolute score on the primary coverage objective (at least once covered)
 # Look at your "Maximal Covering Obj (O)" from previous runs to choose a baseline (e.g., 800000.0)
-MIN_COVERAGE_SCORE = 2150000.0
+MIN_COVERAGE_SCORE = 2420000.0
 
-OUTPUT_IMG  = '../outputs/optimized/backup/ppac_exact_optimal_2.15m_500beats.png'
-OUTPUT_CSV  = '../outputs/optimized/backup/ppac_exact_summary_2.15m_500beats.csv'
+OUTPUT_FOLDER_NAME = "2.42M_500BEATS"
+
+BASE_OUTPUT_DIR = f'../outputs/optimized/backup/{OUTPUT_FOLDER_NAME}'
+
+OUTPUT_IMG  = os.path.join(BASE_OUTPUT_DIR, 'ppac_exact_optimal.png')
+OUTPUT_CSV  = os.path.join(BASE_OUTPUT_DIR, 'ppac_exact_summary.csv')
 OSM_CACHE   = '../resources/la_drive_network.graphml'
 
 # ── NEW: UI Export paths ──────────────────────────────────────────────────────
-OUTPUT_STATIONS    = '../outputs/optimized/backup/stations_2.15m_500beats.csv'
-OUTPUT_INCIDENTS   = '../outputs/optimized/backup/incidents_export_2.15m_500beats.csv'
-OUTPUT_OPT_SUMMARY = '../outputs/optimized/backup/optimization_summary_2.15m_500beats.csv'
-OUTPUT_BEATS_GEO   = '../outputs/optimized/backup/beat_polygons_2.15m_500beats.geojson'
+OUTPUT_STATIONS    = os.path.join(BASE_OUTPUT_DIR, 'stations.csv')
+OUTPUT_INCIDENTS   = os.path.join(BASE_OUTPUT_DIR, 'incidents_export.csv')
+OUTPUT_OPT_SUMMARY = os.path.join(BASE_OUTPUT_DIR, 'optimization_summary.csv')
+OUTPUT_BEATS_GEO   = os.path.join(BASE_OUTPUT_DIR, 'beat_polygons.geojson')
 
 IP_TIME_LIMIT = 720000     # iki yüz saat yetismesi icin
 

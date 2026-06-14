@@ -1,3 +1,26 @@
+"""
+Police Patrol Area Covering (PPAC) — Exact Incident-Level Optimizer
+===================================================================
+Implements the exact PPAC formulation from Curtin, Hayslett-McCall & Qiu (2010).
+Optimizes directly against individual crime incidents (no aggregation).
+
+Filters data strictly to the INTERSECTION of the user polygon and LA_AREA.geojson.
+
+Pipeline
+--------
+Stage 1  Weighted Mini-Batch K-Means on filtered crime incidents -> candidate set J
+Stage 2  Road-network OD matrix -> incident-level coverage sets
+Stage 3  PPAC integer programme -> P optimal HQ locations, checking every incident
+Stage 4  Full incident-level coverage evaluation
+Stage 5  Bounded Voronoi beat map + sector map clipped to unified area intersection
+
+NEW: Exports rich CSV files for UI consumption
+  - outputs/beats/stations.csv        : one row per selected HQ / police station
+  - outputs/beats/incidents_export.csv: one row per crime incident with assignment info
+  - outputs/beats/optimization_summary.csv: overall run metrics
+  - outputs/beats/beat_polygons.csv   : voronoi beat polygon vertices for drawing
+"""
+
 import os
 import warnings
 import time
@@ -36,8 +59,8 @@ BOUNDARY_FILE_PATH = '../resources/LA_AREA.geojson'
 USER_POLYGON_COORDS = [[-118.753967, 34.354774], [-118.096161, 34.354774], [-118.122253, 33.694638], [-118.850098, 33.680925], [-118.753967, 34.354774]]
 # USER_POLYGON_COORDS = [[-118.322754, 34.195901], [-118.482056, 34.025348], [-118.151093, 33.950195], [-118.035736, 34.179998], [-118.322754, 34.195901]]
 
-NUM_BEATS   = 500      # |J|  candidate facility locations
-NUM_SECTORS = 28         # P    command centres to locate
+NUM_BEATS   = 700      # |J|  candidate facility locations
+NUM_SECTORS = 21         # P    command centres to locate
 SERVICE_MI  = 2.0        # S    service radius in miles police station sayisi arttirmak yerine mile dusuruldu 
                             #    bunun sebebi hem ayni sayida polis istasyonu ile kiyas yapabilmek ve  
                             #    LA AREA icerisindeki trafik ile bakınca 2 mile gercekci bir uzaklik olmayabilir.
@@ -45,15 +68,15 @@ SERVICE_MI  = 2.0        # S    service radius in miles police station sayisi ar
 CLUSTER_RADIUS = 50.0
 SERVICE_M   = SERVICE_MI * 1_609.34   # S in metres
 
-OUTPUT_IMG  = '../outputs/optimized/ppac_exact_optimal_28P.png'
-OUTPUT_CSV  = '../outputs/optimized/ppac_exact_summary_28P.csv'
+OUTPUT_IMG  = '../outputs/optimized/ppac_exact_optimal.png'
+OUTPUT_CSV  = '../outputs/optimized/ppac_exact_summary.csv'
 OSM_CACHE   = '../resources/la_drive_network.graphml'
 
 # ── NEW: UI Export paths ──────────────────────────────────────────────────────
-OUTPUT_STATIONS    = '../outputs/optimized/stations_28P.csv'
-OUTPUT_INCIDENTS   = '../outputs/optimized/incidents_export_28P.csv'
-OUTPUT_OPT_SUMMARY = '../outputs/optimized/optimization_summary_28P.csv'
-OUTPUT_BEATS_GEO   = '../outputs/optimized/beat_polygons_28P.geojson'
+OUTPUT_STATIONS    = '../outputs/optimized/stations.csv'
+OUTPUT_INCIDENTS   = '../outputs/optimized/incidents_export.csv'
+OUTPUT_OPT_SUMMARY = '../outputs/optimized/optimization_summary.csv'
+OUTPUT_BEATS_GEO   = '../outputs/optimized/beat_polygons.geojson'
 
 IP_TIME_LIMIT = 720000     # iki yüz saat yetismesi icin
 
@@ -223,7 +246,7 @@ def solve_ppac_ip(coverage_sets: list,
 
         if (i + 1) % print_interval == 0 or (i + 1) == n_inc:
             pct = ((i + 1) / n_inc) * 100
-            print(f"       Constraint build progress: {pct:.0f}% complete ({i + 1}/{n_inc} variables)")
+            print(f"      Constraint build progress: {pct:.0f}% complete ({i + 1}/{n_inc} variables)")
 
     cardinality_constraint = solver.Constraint(float(P), float(P), "cardinality")
     for j in range(n_cand):
@@ -334,35 +357,28 @@ def export_incidents_csv(gdf_incidents: gpd.GeoDataFrame,
                          x_sol: np.ndarray,
                          weights: np.ndarray,
                          coverage_counts: np.ndarray,
-                         inc_to_cluster: np.ndarray,      # <-- ADD parameter
                          output_path: str):
     selected_idx = np.where(x_sol)[0]
     inc_4326 = gdf_incidents.to_crs(4326)
-    n_raw = len(weights)
+    n_inc = len(weights)
 
-    # Build cluster -> [station_rank] mapping from the IP solution
-    n_clusters = coverage_counts.shape[0]
-    cluster_to_stations = [[] for _ in range(n_clusters)]
+    inc_to_stations = [[] for _ in range(n_inc)]
     for rank, cand_idx in enumerate(selected_idx):
-        for cluster_idx in coverage_sets[cand_idx]:
-            cluster_to_stations[cluster_idx].append(rank)
+        for inc_idx in coverage_sets[cand_idx]:
+            inc_to_stations[inc_idx].append(rank)
 
     rows = []
-    for i in range(n_raw):
+    for i in range(n_inc):
         geom = inc_4326.geometry.iloc[i]
-        c = int(inc_to_cluster[i])          # which super-incident this raw incident belongs to
-        cov_count  = int(coverage_counts[c])
-        stations   = cluster_to_stations[c]
-
         row = {
-            'incident_id':       i,
-            'lat':               float(geom.y),
-            'lon':               float(geom.x),
-            'crime_weight':      float(weights[i]),
-            'covered':           int(cov_count >= 1),
-            'backup_count':      cov_count,
-            'covering_stations': json.dumps(stations),
-            'primary_station':   int(stations[0]) if stations else -1,
+            'incident_id': i,
+            'lat': float(geom.y),
+            'lon': float(geom.x),
+            'crime_weight': float(weights[i]),
+            'covered': int(coverage_counts[i] >= 1),
+            'backup_count': int(coverage_counts[i]),
+            'covering_stations': json.dumps(inc_to_stations[i]),
+            'primary_station': int(inc_to_stations[i][0]) if inc_to_stations[i] else -1,
         }
         orig = gdf_incidents.iloc[i]
         for col in ['Crm Cd Desc', 'AREA NAME', 'DATE OCC', 'Vict Age', 'Vict Sex']:
@@ -405,8 +421,8 @@ def export_optimization_summary(n_inc, covered_count, pct_count, pct_weight,
 
 
 def export_beat_polygons_geojson(gdf_beats_clipped: gpd.GeoDataFrame,
-                                 beat_to_sector: np.ndarray,
-                                 output_path: str):
+                                  beat_to_sector: np.ndarray,
+                                  output_path: str):
     out = gdf_beats_clipped.copy()
     out = out.to_crs(4326)
     if 'sector_id' not in out.columns and 'beat_id' in out.columns:
@@ -470,7 +486,6 @@ def generate_patrol_map():
     print("   Collapsing proximate incidents into super-incidents...")
     raw_weights = gdf['crime_weight'].values
     n_raw_incidents = len(gdf)  # Keep track of true initial unaggregated counts
-    gdf_raw = gdf.copy()          # <-- ADD THIS: preserve original incidents
     
     gdf, weights, inc_to_cluster = cluster_incidents(gdf, raw_weights, CLUSTER_RADIUS)
     n_inc = len(gdf) 
@@ -521,7 +536,7 @@ def generate_patrol_map():
     beat_nodes = snap_to_nodes(G_4326, beat_gdf.geometry.x.values, beat_gdf.geometry.y.values)
     print(f"   {NUM_BEATS} candidate HQ nodes snapped.")
 
-    inc_gdf  = gdf.to_crs(4326)
+    inc_gdf   = gdf.to_crs(4326)
     inc_nodes = snap_to_nodes(G_4326, inc_gdf.geometry.x.values, inc_gdf.geometry.y.values)
     print(f"   {n_inc:,} exact incident nodes snapped.  ({time.time()-t3:.1f}s)")
 
@@ -566,11 +581,11 @@ def generate_patrol_map():
     pct_weight = 100 * O / total_w
 
     print(f"\n   ── EXACT PPAC IP Coverage (S = {SERVICE_MI} mi = {SERVICE_M:.0f} m) ──")
-    print(f"   IP Status                      : {status}")
+    print(f"   IP Status                     : {status}")
     if gap:
-        print(f"   MIP Gap                        : {gap:.4f}")
-    print(f"   Exact IP Objective (Z*)        : {Z_ip:,.2f}")
-    print(f"   Incident coverage (count)      : {true_raw_covered_count:,} / {n_raw_incidents:,}  ({pct_count:.1f} %)")
+        print(f"   MIP Gap                       : {gap:.4f}")
+    print(f"   Exact IP Objective (Z*)       : {Z_ip:,.2f}")
+    print(f"   Incident coverage (count)     : {true_raw_covered_count:,} / {n_raw_incidents:,}  ({pct_count:.1f} %)")
     print(f"   Maximal Covering Obj (O)      : {O:,.1f} / {total_w:,.1f}  ({pct_weight:.1f} %)")
     print(f"   Maximal Backup Obj (B)        : {B:,.1f}")
     print(f"   ({time.time()-t6:.1f}s)\n")
@@ -620,12 +635,11 @@ def generate_patrol_map():
     )
 
     df_incidents_export = export_incidents_csv(
-        gdf_incidents=gdf_raw,           # <-- was: gdf
+        gdf_incidents=gdf,
         coverage_sets=inc_coverage_sets,
         x_sol=x_sol,
-        weights=raw_weights,             # <-- was: weights (these are cluster weights)
+        weights=weights,
         coverage_counts=coverage_counts,
-        inc_to_cluster=inc_to_cluster,   # <-- ADD
         output_path=OUTPUT_INCIDENTS,
     )
 
@@ -746,4 +760,3 @@ def generate_patrol_map():
 
 if __name__ == '__main__':
     generate_patrol_map()
-
